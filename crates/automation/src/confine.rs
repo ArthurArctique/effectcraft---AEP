@@ -40,6 +40,8 @@ const REFUSED: &[&str] = &[
     "layer.openSource",
     "help.revealLogFile",
     "file.autoSave",
+    // Runs an outside Python interpreter on the file.
+    "file.importAep",
 ];
 
 /// Commands that read files named by these parameters.
@@ -50,7 +52,6 @@ const READS: &[(&str, &[&str])] = &[
     ("file.importMultiple", &["paths"]),
     ("file.importRecent", &["path"]),
     ("file.importLottie", &["path"]),
-    ("file.importAep", &["path"]),
     ("file.importAeIr", &["path"]),
     ("file.importTimeline", &["path"]),
     ("file.replaceFootage", &["path"]),

@@ -153,11 +153,10 @@ impl Services for FsServices {
             .map(std::path::PathBuf::from)
             .or_else(|| {
                 let exe = std::env::current_exe().ok()?;
+                // Only the app bundle's own copy: never a search of parent folders, which would run
+                // whatever `packaging/aep/aep_ir_export.py` sits above an unpacked binary.
                 let mac_resource = exe.parent()?.join("../Resources/aep_ir_export.py");
-                if mac_resource.is_file() {
-                    return Some(mac_resource);
-                }
-                exe.ancestors().map(|dir| dir.join("packaging/aep/aep_ir_export.py")).find(|candidate| candidate.is_file())
+                mac_resource.is_file().then_some(mac_resource)
             })
             .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "AEP exporter script missing; set EFFECTCRAFT_AEP_EXPORTER"))?;
         let python = std::env::var_os("EFFECTCRAFT_AEP_PYTHON").unwrap_or_else(|| "python3".into());

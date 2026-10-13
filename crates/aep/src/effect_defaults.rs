@@ -28,29 +28,6 @@ fn same(actual: &Json, expected: &Json) -> bool {
     }
 }
 
-fn sapphire(effect_id: &str, raw: &str, child: &Json, effect: &Json) -> bool {
-    if !matches!(effect_id, "S_Monochrome" | "S_CartoonPaint") || !static_value(child) {
-        return false;
-    }
-    let no_mask = fixed(effect, &format!("{effect_id}-0001"), json!(0)) && fixed(effect, &format!("{effect_id}-0235"), json!(0));
-    let no_mocha = effect["sapphire_mocha_state_hex"] == "00" && empty(effect, &format!("{effect_id}-0520"));
-    let suffix = raw.strip_prefix(effect_id).and_then(|s| s.strip_prefix('-'));
-    match suffix {
-        Some("0521" | "0522" | "0523" | "0524" | "0525" | "0526" | "0527" | "0528" | "0529" | "0530" | "0531") => {
-            let value = child["value"].as_f64();
-            let expected = match suffix {
-                Some("0522" | "0524" | "0525" | "0526") => value == Some(0.0) || value == Some(1.0),
-                Some("0530") => value == Some(1.0),
-                _ => value == Some(0.0),
-            };
-            expected && no_mask && no_mocha
-        }
-        Some("0541") => no_mask && no_mocha && child["value"].as_f64().is_some(),
-        Some("0061") => effect_id == "S_CartoonPaint" && child["value"].as_f64() == Some(0.0),
-        _ => false,
-    }
-}
-
 fn lumetri(raw: &str, child: &Json, effect: &Json) -> bool {
     if !static_value(child) {
         return false;
@@ -85,7 +62,6 @@ fn lumetri(raw: &str, child: &Json, effect: &Json) -> bool {
 pub(crate) fn inert(effect_id: &str, raw: &str, child: &Json, effect: &Json) -> bool {
     match effect_id {
         "ec.color.lumetri" => lumetri(raw, child, effect),
-        "S_Monochrome" | "S_CartoonPaint" => sapphire(effect_id, raw, child, effect),
         _ => false,
     }
 }
@@ -113,23 +89,5 @@ mod tests {
         assert!(!inert("ec.color.lumetri", "ADBE Lumetri-0065", &expressed, &effect));
         assert!(inert("ec.color.lumetri", "ADBE Lumetri-0127", &p("ADBE Lumetri-0127", json!(1)), &effect));
         assert!(!inert("ec.color.lumetri", "ADBE Lumetri-0127", &p("ADBE Lumetri-0127", json!(2)), &effect));
-    }
-
-    #[test]
-    fn sapphire_requires_empty_mocha_and_no_mask() {
-        let raw = "S_CartoonPaint-0524";
-        let effect = json!({"sapphire_mocha_state_hex":"00","children":[
-            p("S_CartoonPaint-0001",json!(0)),p("S_CartoonPaint-0235",json!(0)),p("S_CartoonPaint-0520",Json::Null)]});
-        assert!(inert("S_CartoonPaint", raw, &p(raw, json!(1)), &effect));
-        assert!(inert("S_CartoonPaint", "S_CartoonPaint-0541", &p("S_CartoonPaint-0541", json!(292)), &effect));
-        assert!(inert("S_CartoonPaint", "S_CartoonPaint-0061", &p("S_CartoonPaint-0061", json!(0)), &effect));
-        let mut active = effect.clone();
-        active["sapphire_mocha_state_hex"] = json!("01");
-        assert!(!inert("S_CartoonPaint", raw, &p(raw, json!(1)), &active));
-        assert!(!inert("S_CartoonPaint", "S_CartoonPaint-0541", &p("S_CartoonPaint-0541", json!(292)), &active));
-        let mut mask = effect.clone();
-        mask["children"][0]["value"] = json!(1);
-        assert!(!inert("S_CartoonPaint", "S_CartoonPaint-0541", &p("S_CartoonPaint-0541", json!(292)), &mask));
-        assert!(!inert("S_CartoonPaint", "S_CartoonPaint-0061", &p("S_CartoonPaint-0061", json!(1)), &effect));
     }
 }

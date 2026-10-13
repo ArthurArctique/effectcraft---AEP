@@ -1,6 +1,6 @@
-//! Corpus-observed AE effect/child match names → stable EffectCraft IDs.
-//! Source: integrations/effectcraft/ae_effect_map.json.
-//! Generated match arms; hand-authored policy and tests below are preserved.
+//! AE effect/child match names of the effects After Effects ships → stable EffectCraft IDs.
+//! Third-party plug-ins and template-specific pseudo effects are not mapped (they import as
+//! losses).
 //! Unresolved IDs return None; no display-name lookup occurs during import.
 
 pub(crate) fn effect_id(ae_match: &str) -> Option<&'static str> {
@@ -113,16 +113,6 @@ pub(crate) fn effect_id(ae_match: &str) -> Option<&'static str> {
         "Mettle SkyBox Chromatic Aberrat" => "ec.vr.chromaticaberrations",
         "Mettle SkyBox Digital Glitch" => "ec.vr.digitalglitch",
         "Mettle SkyBox Glow" => "ec.vr.glow",
-        "PEDG" => "ec.stylize.deepglow",
-        "PESS2" => "ec.perspective.shadowstudio2",
-        "PESS3" => "ec.perspective.shadowstudio3",
-        "S_CartoonPaint" => "S_CartoonPaint",
-        "S_DropShadow" => "S_DropShadow",
-        "S_Glow" => "S_Glow",
-        "S_Gradient" => "S_Gradient",
-        "S_Grid" => "S_Grid",
-        "S_HalfTone" => "S_HalfTone",
-        "S_Monochrome" => "S_Monochrome",
         "VISINF Grain Implant" => "ec.noise.addgrain",
         _ => return None,
     })
@@ -1039,145 +1029,6 @@ pub(crate) fn param_id(effect_id: &str, ae_param_match: &str) -> Option<&'static
         ("ec.vr.glow", "Mettle SkyBox Glow-0006") => "useTintColor",
         ("ec.vr.glow", "Mettle SkyBox Glow-0007") => "tintColor",
         ("ec.vr.glow", "Mettle SkyBox Glow-0008") => "frameLayout",
-        ("ec.stylize.deepglow", "PEDG-0001") => "PEDG-0001",
-        ("ec.stylize.deepglow", "PEDG-0002") => "PEDG-0002",
-        ("ec.stylize.deepglow", "PEDG-0004") => "PEDG-0004",
-        ("ec.stylize.deepglow", "PEDG-0005") => "PEDG-0005",
-        ("ec.stylize.deepglow", "PEDG-0008") => "PEDG-0008",
-        ("ec.stylize.deepglow", "PEDG-0009") => "PEDG-0009",
-        ("ec.stylize.deepglow", "PEDG-0010") => "PEDG-0010",
-        ("ec.stylize.deepglow", "PEDG-0011") => "PEDG-0011",
-        ("ec.stylize.deepglow", "PEDG-0013") => "PEDG-0013",
-        ("ec.stylize.deepglow", "PEDG-0015") => "PEDG-0015",
-        ("ec.stylize.deepglow", "PEDG-0019") => "PEDG-0019",
-        ("ec.stylize.deepglow", "PEDG-0023") => "PEDG-0023",
-        ("ec.stylize.deepglow", "PEDG-0024") => "PEDG-0024",
-        ("ec.stylize.deepglow", "PEDG-0025") => "PEDG-0025",
-        ("ec.stylize.deepglow", "PEDG-0031") => "PEDG-0031",
-        ("ec.stylize.deepglow", "PEDG-0032") => "PEDG-0032",
-        ("ec.stylize.deepglow", "PEDG-0033") => "PEDG-0033",
-        ("ec.stylize.deepglow", "PEDG-0037") => "PEDG-0037",
-        ("ec.stylize.deepglow", "PEDG-0038") => "PEDG-0038",
-        ("ec.stylize.deepglow", "PEDG-0039") => "PEDG-0039",
-        ("ec.stylize.deepglow", "PEDG-0041") => "PEDG-0041",
-        ("ec.stylize.deepglow", "PEDG-0043") => "PEDG-0043",
-        ("ec.stylize.deepglow", "PEDG-0055") => "PEDG-0055",
-        ("ec.stylize.deepglow", "PEDG-0056") => "PEDG-0056",
-        ("ec.stylize.deepglow", "PEDG-0057") => "PEDG-0057",
-        ("ec.stylize.deepglow", "PEDG-0059") => "PEDG-0059",
-        ("ec.stylize.deepglow", "PEDG-0084") => "PEDG-0084",
-        ("ec.perspective.shadowstudio2", "PESS2-0002") => "PESS2-0002",
-        ("ec.perspective.shadowstudio2", "PESS2-0004") => "PESS2-0004",
-        ("ec.perspective.shadowstudio2", "PESS2-0005") => "PESS2-0005",
-        ("ec.perspective.shadowstudio2", "PESS2-0006") => "PESS2-0006",
-        ("ec.perspective.shadowstudio2", "PESS2-0008") => "PESS2-0008",
-        ("ec.perspective.shadowstudio2", "PESS2-0009") => "PESS2-0009",
-        ("ec.perspective.shadowstudio2", "PESS2-0022") => "PESS2-0022",
-        ("ec.perspective.shadowstudio2", "PESS2-0027") => "PESS2-0027",
-        ("ec.perspective.shadowstudio2", "PESS2-0028") => "PESS2-0028",
-        ("ec.perspective.shadowstudio2", "PESS2-0044") => "PESS2-0044",
-        ("ec.perspective.shadowstudio3", "PESS3-0002") => "PESS3-0002",
-        ("ec.perspective.shadowstudio3", "PESS3-0004") => "PESS3-0004",
-        ("ec.perspective.shadowstudio3", "PESS3-0006") => "PESS3-0006",
-        ("ec.perspective.shadowstudio3", "PESS3-0022") => "PESS3-0022",
-        ("ec.perspective.shadowstudio3", "PESS3-0026") => "PESS3-0026",
-        ("ec.perspective.shadowstudio3", "PESS3-0027") => "PESS3-0027",
-        ("ec.perspective.shadowstudio3", "PESS3-0038") => "PESS3-0038",
-        ("ec.perspective.shadowstudio3", "PESS3-0075") => "PESS3-0075",
-        ("ec.perspective.shadowstudio3", "PESS3-0076") => "PESS3-0076",
-        ("ec.perspective.shadowstudio3", "PESS3-0078") => "PESS3-0078",
-        ("ec.perspective.shadowstudio3", "PESS3-0084") => "PESS3-0084",
-        ("ec.perspective.shadowstudio3", "PESS3-0086") => "PESS3-0086",
-        ("ec.perspective.shadowstudio3", "PESS3-0087") => "PESS3-0087",
-        ("S_CartoonPaint", "S_CartoonPaint-0001") => "S_CartoonPaint-0001",
-        ("S_CartoonPaint", "S_CartoonPaint-0050") => "S_CartoonPaint-0050",
-        ("S_CartoonPaint", "S_CartoonPaint-0051") => "S_CartoonPaint-0051",
-        ("S_CartoonPaint", "S_CartoonPaint-0052") => "S_CartoonPaint-0052",
-        ("S_CartoonPaint", "S_CartoonPaint-0053") => "S_CartoonPaint-0053",
-        ("S_CartoonPaint", "S_CartoonPaint-0054") => "S_CartoonPaint-0054",
-        ("S_CartoonPaint", "S_CartoonPaint-0055") => "S_CartoonPaint-0055",
-        ("S_CartoonPaint", "S_CartoonPaint-0056") => "S_CartoonPaint-0056",
-        ("S_CartoonPaint", "S_CartoonPaint-0057") => "S_CartoonPaint-0057",
-        ("S_CartoonPaint", "S_CartoonPaint-0058") => "S_CartoonPaint-0058",
-        ("S_CartoonPaint", "S_CartoonPaint-0059") => "S_CartoonPaint-0059",
-        ("S_CartoonPaint", "S_CartoonPaint-0060") => "S_CartoonPaint-0060",
-        ("S_CartoonPaint", "S_CartoonPaint-0062") => "S_CartoonPaint-0062",
-        ("S_CartoonPaint", "S_CartoonPaint-0063") => "S_CartoonPaint-0063",
-        ("S_CartoonPaint", "S_CartoonPaint-0064") => "S_CartoonPaint-0064",
-        ("S_CartoonPaint", "S_CartoonPaint-0065") => "S_CartoonPaint-0065",
-        ("S_CartoonPaint", "S_CartoonPaint-0066") => "S_CartoonPaint-0066",
-        ("S_CartoonPaint", "S_CartoonPaint-0067") => "S_CartoonPaint-0067",
-        ("S_CartoonPaint", "S_CartoonPaint-0068") => "S_CartoonPaint-0068",
-        ("S_CartoonPaint", "S_CartoonPaint-0069") => "S_CartoonPaint-0069",
-        ("S_CartoonPaint", "S_CartoonPaint-0070") => "S_CartoonPaint-0070",
-        ("S_CartoonPaint", "S_CartoonPaint-0235") => "S_CartoonPaint-0235",
-        ("S_CartoonPaint", "S_CartoonPaint-0540") => "S_CartoonPaint-0540",
-        ("S_CartoonPaint", "S_CartoonPaint-0542") => "S_CartoonPaint-0542",
-        ("S_DropShadow", "S_DropShadow-0050") => "S_DropShadow-0050",
-        ("S_DropShadow", "S_DropShadow-0051") => "S_DropShadow-0051",
-        ("S_DropShadow", "S_DropShadow-0052") => "S_DropShadow-0052",
-        ("S_DropShadow", "S_DropShadow-0053") => "S_DropShadow-0053",
-        ("S_DropShadow", "S_DropShadow-0054") => "S_DropShadow-0054",
-        ("S_DropShadow", "S_DropShadow-0055") => "S_DropShadow-0055",
-        ("S_Glow", "S_Glow-0050") => "S_Glow-0050",
-        ("S_Glow", "S_Glow-0051") => "S_Glow-0051",
-        ("S_Glow", "S_Glow-0052") => "S_Glow-0052",
-        ("S_Glow", "S_Glow-0053") => "S_Glow-0053",
-        ("S_Glow", "S_Glow-0054") => "S_Glow-0054",
-        ("S_Glow", "S_Glow-0055") => "S_Glow-0055",
-        ("S_Glow", "S_Glow-0056") => "S_Glow-0056",
-        ("S_Glow", "S_Glow-0057") => "S_Glow-0057",
-        ("S_Glow", "S_Glow-0058") => "S_Glow-0058",
-        ("S_Glow", "S_Glow-0059") => "S_Glow-0059",
-        ("S_Glow", "S_Glow-0061") => "S_Glow-0061",
-        ("S_Glow", "S_Glow-0062") => "S_Glow-0062",
-        ("S_Glow", "S_Glow-0065") => "S_Glow-0065",
-        ("S_Gradient", "S_Gradient-0050") => "S_Gradient-0050",
-        ("S_Gradient", "S_Gradient-0051") => "S_Gradient-0051",
-        ("S_Gradient", "S_Gradient-0052") => "S_Gradient-0052",
-        ("S_Gradient", "S_Gradient-0053") => "S_Gradient-0053",
-        ("S_Gradient", "S_Gradient-0054") => "S_Gradient-0054",
-        ("S_Gradient", "S_Gradient-0055") => "S_Gradient-0055",
-        ("S_Gradient", "S_Gradient-0056") => "S_Gradient-0056",
-        ("S_Gradient", "S_Gradient-0057") => "S_Gradient-0057",
-        ("S_Gradient", "S_Gradient-0058") => "S_Gradient-0058",
-        ("S_Gradient", "S_Gradient-0059") => "S_Gradient-0059",
-        ("S_Gradient", "S_Gradient-0060") => "S_Gradient-0060",
-        ("S_Grid", "S_Grid-0050") => "S_Grid-0050",
-        ("S_Grid", "S_Grid-0051") => "S_Grid-0051",
-        ("S_Grid", "S_Grid-0052") => "S_Grid-0052",
-        ("S_Grid", "S_Grid-0053") => "S_Grid-0053",
-        ("S_Grid", "S_Grid-0054") => "S_Grid-0054",
-        ("S_Grid", "S_Grid-0055") => "S_Grid-0055",
-        ("S_Grid", "S_Grid-0056") => "S_Grid-0056",
-        ("S_Grid", "S_Grid-0057") => "S_Grid-0057",
-        ("S_Grid", "S_Grid-0058") => "S_Grid-0058",
-        ("S_Grid", "S_Grid-0059") => "S_Grid-0059",
-        ("S_Grid", "S_Grid-0060") => "S_Grid-0060",
-        ("S_Grid", "S_Grid-0061") => "S_Grid-0061",
-        ("S_Grid", "S_Grid-0062") => "S_Grid-0062",
-        ("S_Grid", "S_Grid-0063") => "S_Grid-0063",
-        ("S_Grid", "S_Grid-0066") => "S_Grid-0066",
-        ("S_HalfTone", "S_HalfTone-0050") => "S_HalfTone-0050",
-        ("S_HalfTone", "S_HalfTone-0051") => "S_HalfTone-0051",
-        ("S_HalfTone", "S_HalfTone-0052") => "S_HalfTone-0052",
-        ("S_HalfTone", "S_HalfTone-0053") => "S_HalfTone-0053",
-        ("S_HalfTone", "S_HalfTone-0054") => "S_HalfTone-0054",
-        ("S_HalfTone", "S_HalfTone-0055") => "S_HalfTone-0055",
-        ("S_HalfTone", "S_HalfTone-0056") => "S_HalfTone-0056",
-        ("S_HalfTone", "S_HalfTone-0057") => "S_HalfTone-0057",
-        ("S_HalfTone", "S_HalfTone-0058") => "S_HalfTone-0058",
-        ("S_HalfTone", "S_HalfTone-0059") => "S_HalfTone-0059",
-        ("S_HalfTone", "S_HalfTone-0060") => "S_HalfTone-0060",
-        ("S_Monochrome", "S_Monochrome-0001") => "S_Monochrome-0001",
-        ("S_Monochrome", "S_Monochrome-0050") => "S_Monochrome-0050",
-        ("S_Monochrome", "S_Monochrome-0051") => "S_Monochrome-0051",
-        ("S_Monochrome", "S_Monochrome-0052") => "S_Monochrome-0052",
-        ("S_Monochrome", "S_Monochrome-0053") => "S_Monochrome-0053",
-        ("S_Monochrome", "S_Monochrome-0054") => "S_Monochrome-0054",
-        ("S_Monochrome", "S_Monochrome-0235") => "S_Monochrome-0235",
-        ("S_Monochrome", "S_Monochrome-0540") => "S_Monochrome-0540",
-        ("S_Monochrome", "S_Monochrome-0542") => "S_Monochrome-0542",
         ("ec.noise.addgrain", "VISINF Grain Implant-0002") => "tweaking/channelIntensities/redIntensity",
         ("ec.noise.addgrain", "VISINF Grain Implant-0003") => "tweaking/channelIntensities/greenIntensity",
         ("ec.noise.addgrain", "VISINF Grain Implant-0004") => "tweaking/channelIntensities/blueIntensity",
@@ -1238,38 +1089,13 @@ pub(crate) fn inert_diagnostic(effect_id: &str, raw: &str, value: &serde_json::V
             ("CC Sphere-0026", Some(1.0)) | ("CC Sphere-0021", Some(0.0)) | ("CC Sphere-0023", Some(0.0)) | ("CC Sphere-0024", Some(0.0))
         );
     }
-    if value.as_f64() != Some(1.0) {
-        return false;
-    }
-    matches!(
-        (effect_id, raw),
-        ("ec.perspective.shadowstudio2", "PESS2-0059")
-            | ("ec.perspective.shadowstudio2", "PESS2-0060")
-            | ("ec.perspective.shadowstudio2", "PESS2-0061")
-            | ("ec.perspective.shadowstudio2", "PESS2-0062")
-            | ("ec.perspective.shadowstudio3", "PESS3-0052")
-            | ("ec.perspective.shadowstudio3", "PESS3-0053")
-            | ("ec.perspective.shadowstudio3", "PESS3-0054")
-            | ("ec.perspective.shadowstudio3", "PESS3-0055")
-            | ("ec.stylize.deepglow", "PEDG-0072")
-            | ("ec.stylize.deepglow", "PEDG-0073")
-            | ("ec.stylize.deepglow", "PEDG-0074")
-            | ("ec.stylize.deepglow", "PEDG-0075")
-    )
+    let _ = value;
+    false
 }
 
 /// These exact AE effects expose expression controls and do not render pixels.
 pub(crate) fn control_only(ae_match: &str) -> bool {
-    matches!(
-        ae_match,
-        "ADBE CM CropEdges"
-            | "ADBE CM LightLeaksRandom"
-            | "ADBE CM WigglePosition"
-            | "Pseudo/@@OMludPqsS0ifGA70qIaLCA"
-            | "Pseudo/GridBuilderRadial_106"
-            | "Pseudo/MDS Elastic Controller"
-            | "Pseudo/MHAC PrCtrl J95 4"
-    )
+    matches!(ae_match, "ADBE CM CropEdges" | "ADBE CM LightLeaksRandom" | "ADBE CM WigglePosition")
 }
 
 #[cfg(test)]
@@ -1312,22 +1138,6 @@ mod tests {
 
     #[test]
     fn reviewed_match_ids_and_diagnostics() {
-        assert_eq!(effect_id("PEDG"), Some("ec.stylize.deepglow"));
-        assert_eq!(param_id("ec.stylize.deepglow", "PEDG-0001"), Some("PEDG-0001"));
-        assert_eq!(param_id("ec.stylize.deepglow", "PEDG-0019"), Some("PEDG-0019"));
-        assert_eq!(param_id("ec.stylize.deepglow", "PEDG-0055"), Some("PEDG-0055"));
-        assert_eq!(param_id("ec.stylize.deepglow", "PEDG-0084"), Some("PEDG-0084"));
-        assert_eq!(param_id("ec.stylize.deepglow", "PEDG-0039"), Some("PEDG-0039"));
-        assert_eq!(param_id("ec.stylize.deepglow", "PEDG-0057"), Some("PEDG-0057"));
-        assert_eq!(param_id("ec.stylize.deepglow", "PEDG-0059"), Some("PEDG-0059"));
-        assert_eq!(param_id("ec.stylize.deepglow", "PEDG-0056"), Some("PEDG-0056"));
-        for raw in ["PEDG-0009", "PEDG-0025", "PEDG-0031", "PEDG-0032", "PEDG-0033", "PEDG-0043"] {
-            assert_eq!(param_id("ec.stylize.deepglow", raw), Some(raw));
-        }
-        assert_eq!(param_id("ec.perspective.shadowstudio2", "PESS2-0022"), Some("PESS2-0022"));
-        assert_eq!(param_id("ec.perspective.shadowstudio2", "PESS2-0028"), Some("PESS2-0028"));
-        assert_eq!(param_id("ec.perspective.shadowstudio3", "PESS3-0027"), Some("PESS3-0027"));
-        assert_eq!(param_id("ec.perspective.shadowstudio3", "PESS3-0078"), Some("PESS3-0078"));
         assert_eq!(param_id("ec.perspective.cccylinder", "CC Cylinder-0010"), Some("rotationY"));
         assert_eq!(param_id("ec.sim.ccballaction", "CC Ball Action-0008"), Some("instabilityState"));
         assert_eq!(param_id("ec.distort.ccpageturn", "CC Page Turn-0008"), Some("controls"));
@@ -1355,21 +1165,10 @@ mod tests {
         assert_eq!(param_id("ec.noise.addgrain", "VISINF Grain Implant-0057"), None);
         assert_eq!(param_id("ec.noise.addgrain", "VISINF Grain Implant-0059"), None);
         assert_eq!(param_id("ec.noise.addgrain", "VISINF Grain Implant-0060"), None);
-        assert_eq!(param_id("S_Monochrome", "S_Monochrome-0001"), Some("S_Monochrome-0001"));
-        assert_eq!(param_id("S_Monochrome", "S_Monochrome-0235"), Some("S_Monochrome-0235"));
-        assert_eq!(param_id("S_CartoonPaint", "S_CartoonPaint-0540"), Some("S_CartoonPaint-0540"));
-        assert_eq!(param_id("S_CartoonPaint", "S_CartoonPaint-0542"), Some("S_CartoonPaint-0542"));
-        assert_eq!(param_id("S_CartoonPaint", "S_CartoonPaint-0541"), None);
-        assert_eq!(param_id("S_CartoonPaint", "S_CartoonPaint-0520"), None);
         assert_eq!(param_id("ec.perspective.cccylinder", "CC Cylinder-0003"), None);
         assert_eq!(param_id("ec.color.lumetri", "ADBE Lumetri-0084"), None);
         assert_eq!(effect_id("MB LookSuite3"), None);
         assert!(control_only("ADBE CM WigglePosition"));
         assert!(!control_only("MB LookSuite3"));
-        assert!(inert_diagnostic("ec.stylize.deepglow", "PEDG-0072", &serde_json::json!(1), false, false));
-        assert!(!inert_diagnostic("ec.stylize.deepglow", "PEDG-0072", &serde_json::json!(2), false, false));
-        assert!(!inert_diagnostic("ec.stylize.deepglow", "PEDG-0072", &serde_json::json!(1), true, false));
-        assert!(!inert_diagnostic("ec.stylize.deepglow", "PEDG-0072", &serde_json::json!(1), false, true));
-        assert!(!inert_diagnostic("ec.perspective.shadowstudio3", "PESS3-0068", &serde_json::json!(1), false, false));
     }
 }
