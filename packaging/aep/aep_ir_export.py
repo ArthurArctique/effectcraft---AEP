@@ -15,6 +15,9 @@ import unicodedata
 from enum import Enum
 from pathlib import Path, PureWindowsPath
 
+if sys.version_info < (3, 11):
+    raise SystemExit("AEP export requires Python 3.11 or newer; set EFFECTCRAFT_AEP_PYTHON to a supported interpreter")
+
 import py_aep
 from fontTools.ttLib import TTFont
 from py_aep.binary.chunk import ListChunk

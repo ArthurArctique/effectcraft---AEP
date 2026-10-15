@@ -3,7 +3,7 @@
 `file.importAep` runs the bundled `aep_ir_export.py` through Python, then imports its
 versioned JSON into native EffectCraft project objects. The resulting `.ecproj`
 does not require After Effects or Python to open or edit. The importer requires
-Python with [`py-aep`](https://github.com/forticheprod/py-aep) installed while
+Python 3.11 or newer with [`py-aep`](https://github.com/forticheprod/py-aep) installed while
 converting; the SceneYard acceptance corpus uses py-aep commit
 `e12a451c35bacd3f34a080090265f9370e66162b` (MIT).
 
@@ -13,9 +13,11 @@ outside an AEP's own folder; the exporter searches that directory for exact
 PostScript-name and version matches. The standalone converter accepts the same
 directory through `--font-search-root`.
 The pinned dependency is in `requirements.txt` for a separate import-time venv.
-The app looks for `aep_ir_export.py` in its macOS Resources folder or this
-checkout's `packaging/aep/` directory. `EFFECTCRAFT_AEP_EXPORTER` overrides
-that path. The exporter is also usable directly:
+Automatic discovery is limited to `Contents/Resources/aep_ir_export.py` inside
+a macOS `.app` bundle. Development checkouts and other platforms must set
+`EFFECTCRAFT_AEP_EXPORTER` explicitly. Parent folders are never searched.
+Conversion JSON is read through a bounded pipe (512 MiB maximum), without a
+shared temporary file. The exporter is also usable directly:
 
 ```sh
 EFFECTCRAFT_CLI=/path/to/effectcraft-cli python3 packaging/aep/convert_aep.py source.aep source.ecproj

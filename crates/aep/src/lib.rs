@@ -24,7 +24,6 @@ mod models3d;
 mod orient;
 mod puppet;
 mod roto;
-mod shadow_defaults;
 mod shapes;
 mod styles;
 mod text;
@@ -1242,9 +1241,6 @@ fn import_property(
         {
             let mut group = effectcraft_effects::instantiate(spec, &mut build::Ids(&mut project.next_id), name, size);
             group.enabled = boolean(ir, &["enabled"]).unwrap_or(true);
-            if matches!(spec.id, "ec.perspective.shadowstudio2" | "ec.perspective.shadowstudio3") {
-                losses.push(format!("{context}: Shadow Studio native directional rendering is approximate; visual parity unverified"));
-            }
             if spec.id == effectcraft_effects::puppet::ID {
                 puppet::import(project, &mut group, ir, layer_time, losses, context);
             } else if spec.id == effectcraft_effects::roto::ID {
@@ -1568,12 +1564,6 @@ fn import_native_effect_params(
             continue; // AE NO_VALUE with no animation or expression is UI-only.
         }
         if effects::inert_diagnostic(
-            effect_id,
-            raw,
-            value_json,
-            !array(child, "keyframes").is_empty(),
-            !string(child, &["expression"]).unwrap_or("").is_empty(),
-        ) || shadow_defaults::inert(
             effect_id,
             raw,
             value_json,
