@@ -188,7 +188,8 @@ class Exporter:
             return None
         count = getattr(opti, "psd_layer_count", 0)
         index = getattr(opti, "psd_layer_index", None)
-        if not count:
+        # 0xFFFFFFFF (-1) is "Merged Layers": the whole document, not one chosen layer.
+        if not count or index == 0xFFFFFFFF:
             return None
         if not isinstance(index, int) or not 0 <= index < count <= 65535:
             raise ValueError("invalid Photoshop source layer index/count")
