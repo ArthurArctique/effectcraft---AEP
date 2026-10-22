@@ -1,5 +1,7 @@
-//! Launch the explicitly configured converter or the macOS app's bundled exporter.
+//! Launch the explicitly configured converter or the one an app carries (a macOS app bundle, or
+//! the folder of a Windows app).
 
+use std::ffi::OsStr;
 use std::io::{self, BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -8,33 +10,58 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::AepProgress;
 
-fn bundled_exporter(exe: &Path) -> Option<PathBuf> {
-    let macos = exe.parent()?;
-    let contents = macos.parent()?;
-    let app = contents.parent()?;
-    if macos.file_name()? != "MacOS" || contents.file_name()? != "Contents" || app.extension()? != "app" {
-        return None;
+/// The exporter an app carries on `os` (`std::env::consts::OS`). macOS: only inside an app
+/// bundle (`Contents/Resources`), so a loose binary never runs a script found next to it.
+/// Windows: beside the executable, in the app's own folder, which Windows already trusts for the
+/// DLLs it loads (`packaging/windows/aep-preview.ps1` lays it out). Elsewhere: none.
+fn bundled_exporter(exe: &Path, os: &str) -> Option<PathBuf> {
+    match os {
+        "macos" => {
+            let macos = exe.parent()?;
+            let contents = macos.parent()?;
+            let app = contents.parent()?;
+            if macos.file_name()? != "MacOS" || contents.file_name()? != "Contents" || app.extension()? != "app" {
+                return None;
+            }
+            Some(contents.join("Resources/aep_ir_export.py"))
+        }
+        // A bare file name has no folder: never resolve it against the working directory.
+        "windows" => Some(exe.parent().filter(|dir| !dir.as_os_str().is_empty())?.join("aep_ir_export.py")),
+        _ => None,
     }
-    Some(contents.join("Resources/aep_ir_export.py"))
 }
 
-/// The import-time venv (Python with py-aep) an app bundle may carry next to its exporter.
-fn bundled_python(exporter: &Path) -> PathBuf {
-    exporter.with_file_name("aep-python").join("bin/python3")
+/// The import-time venv (Python with py-aep) an app may carry next to its exporter.
+fn bundled_python(exporter: &Path, os: &str) -> PathBuf {
+    let venv = exporter.with_file_name("aep-python");
+    if os == "windows" { venv.join("Scripts").join("python.exe") } else { venv.join("bin/python3") }
 }
 
 pub(super) fn convert(path: &str, progress: &AepProgress) -> io::Result<Vec<u8>> {
-    let bundled = if cfg!(target_os = "macos") { std::env::current_exe().ok().and_then(|exe| bundled_exporter(&exe)) } else { None };
+    let os = std::env::consts::OS;
+    let bundled = std::env::current_exe().ok().and_then(|exe| bundled_exporter(&exe, os));
     let script = std::env::var_os("EFFECTCRAFT_AEP_EXPORTER")
         .map(PathBuf::from)
         .or_else(|| bundled.clone().filter(|p| p.is_file()))
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "AEP exporter script missing; set EFFECTCRAFT_AEP_EXPORTER"))?;
+    // Windows has no `python3`, only a Microsoft Store alias that offers to install Python;
+    // python.org's installer and the Store's Python both provide `python`.
     let python = std::env::var_os("EFFECTCRAFT_AEP_PYTHON")
-        .or_else(|| bundled.map(|exporter| bundled_python(&exporter)).filter(|p| p.is_file()).map(PathBuf::into_os_string))
-        .unwrap_or_else(|| "python3".into());
+        .or_else(|| bundled.map(|exporter| bundled_python(&exporter, os)).filter(|p| p.is_file()).map(PathBuf::into_os_string))
+        .unwrap_or_else(|| if os == "windows" { "python" } else { "python3" }.into());
+    run(&python, &script, path, progress)
+}
+
+fn run(python: &OsStr, script: &Path, path: &str, progress: &AepProgress) -> io::Result<Vec<u8>> {
     let mut command = Command::new(python);
     command.arg(script).arg(path).arg("--stdout").arg("--progress").env("PYTHONIOENCODING", "utf-8");
-    capture(&mut command, 512 * 1024 * 1024, progress)
+    capture(&mut command, 512 * 1024 * 1024, progress).map_err(|e| match e.kind() {
+        io::ErrorKind::NotFound => io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("Python not found ({}); set EFFECTCRAFT_AEP_PYTHON to an interpreter with py-aep installed", python.to_string_lossy()),
+        ),
+        _ => e,
+    })
 }
 
 /// A converter progress line on stderr (`--progress`): `@progress DONE TOTAL MESSAGE`.
@@ -123,11 +150,11 @@ mod tests {
     #[test]
     fn only_app_bundles_supply_an_automatic_exporter() {
         assert_eq!(
-            bundled_exporter(Path::new("/Applications/EffectCraft.app/Contents/MacOS/effectcraft")),
+            bundled_exporter(Path::new("/Applications/EffectCraft.app/Contents/MacOS/effectcraft"), "macos"),
             Some(PathBuf::from("/Applications/EffectCraft.app/Contents/Resources/aep_ir_export.py"))
         );
         assert_eq!(
-            bundled_python(Path::new("/Applications/EffectCraft.app/Contents/Resources/aep_ir_export.py")),
+            bundled_python(Path::new("/Applications/EffectCraft.app/Contents/Resources/aep_ir_export.py"), "macos"),
             PathBuf::from("/Applications/EffectCraft.app/Contents/Resources/aep-python/bin/python3")
         );
         for exe in [
@@ -136,8 +163,30 @@ mod tests {
             "/Downloads/Contents/MacOS/effectcraft",
             "/Downloads/Fake/Contents/MacOS/effectcraft",
         ] {
-            assert_eq!(bundled_exporter(Path::new(exe)), None, "{exe}");
+            assert_eq!(bundled_exporter(Path::new(exe), "macos"), None, "{exe}");
         }
+        assert_eq!(bundled_exporter(Path::new("/usr/bin/effectcraft"), "linux"), None);
+    }
+
+    #[test]
+    fn a_windows_app_folder_supplies_its_exporter_and_venv() {
+        let app = Path::new("/Users/me/AppData/Local/Programs/EffectCraft AEP");
+        let exporter = bundled_exporter(&app.join("effectcraft.exe"), "windows");
+        assert_eq!(exporter, Some(app.join("aep_ir_export.py")));
+        assert_eq!(bundled_python(&app.join("aep_ir_export.py"), "windows"), app.join("aep-python").join("Scripts").join("python.exe"));
+        // The CLI beside the app finds the same converter.
+        assert_eq!(bundled_exporter(&app.join("effectcraft-cli.exe"), "windows"), exporter);
+        // Never a script in the working directory.
+        assert_eq!(bundled_exporter(Path::new("effectcraft.exe"), "windows"), None);
+    }
+
+    #[test]
+    fn a_missing_interpreter_says_how_to_choose_one() {
+        let python = OsStr::new("effectcraft-test-no-such-python");
+        let error = run(python, Path::new("aep_ir_export.py"), "project.aep", &|_, _, _| true).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::NotFound);
+        let message = error.to_string();
+        assert!(message.contains("effectcraft-test-no-such-python") && message.contains("EFFECTCRAFT_AEP_PYTHON"), "{message}");
     }
 
     #[cfg(unix)]

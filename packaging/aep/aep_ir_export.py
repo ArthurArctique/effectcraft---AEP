@@ -814,6 +814,13 @@ class Exporter:
                            "losses": len(self.losses), "media_issues": len(self.media_issues)}}
 
 
+def write_json(path, encoded):
+    """The IR file is UTF-8 whatever the system's encoding (Windows' is often cp1252, which has
+    no emoji or CJK for layer and file names)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(encoded, encoding="utf-8")
+
+
 def main():
     # py-aep builds millions of long-lived objects: the cyclic collector would rescan them over
     # and over (half the run time on a 1,400-layer project) and freeing them at exit takes
@@ -838,8 +845,7 @@ def main():
     if args.stdout:
         sys.stdout.write(encoded + "\n")
     else:
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(encoded)
+        write_json(args.output, encoded)
         print(json.dumps({"output": str(args.output), **data["counts"]}))
     sys.stdout.flush()
     sys.stderr.flush()

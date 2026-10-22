@@ -23,17 +23,18 @@ def convert(source, output, cli, allow_losses=False, font_search_root=None):
         export_args = [sys.executable, str(exporter), str(source), '-o', str(ir)]
         if font_search_root is not None:
             export_args.extend(['--font-search-root', str(Path(font_search_root).resolve())])
+        # UTF-8 throughout, not the system encoding (cp1252 on Windows).
         exported = subprocess.run(export_args,
-                                  capture_output=True, text=True)
+                                  capture_output=True, encoding='utf-8', errors='replace')
         if exported.returncode:
             raise RuntimeError(exported.stderr.strip() or exported.stdout.strip())
-        data = json.loads(ir.read_text())
+        data = json.loads(ir.read_text(encoding='utf-8'))
         if data.get('losses') and not allow_losses:
             raise RuntimeError(f"AEP extraction has {len(data['losses'])} fidelity gaps; no project was written")
         params = json.dumps({'path': str(ir), 'sourceDir': str(source.parent), 'allowLosses': allow_losses})
         imported = subprocess.run([str(cli), 'exec', 'file.importAeIr', '--params', params,
                                    '--empty', '--save-as', str(partial), '--json'],
-                                  capture_output=True, text=True)
+                                  capture_output=True, encoding='utf-8', errors='replace')
         if imported.returncode:
             raise RuntimeError(imported.stderr.strip() or imported.stdout.strip())
         reply = json.loads(imported.stdout)
@@ -52,7 +53,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('source', type=Path)
     parser.add_argument('output', type=Path)
-    sibling_cli = Path(__file__).with_name('effectcraft-cli')
+    sibling_cli = Path(__file__).with_name('effectcraft-cli.exe' if os.name == 'nt' else 'effectcraft-cli')
     parser.add_argument('--cli', default=os.environ.get('EFFECTCRAFT_CLI',
         str(sibling_cli) if sibling_cli.is_file() else 'effectcraft-cli'))
     parser.add_argument('--allow-losses', action='store_true', help='write an inspection project even with reported fidelity gaps')

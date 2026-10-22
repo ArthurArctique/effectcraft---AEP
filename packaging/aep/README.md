@@ -8,16 +8,26 @@ converting; the SceneYard acceptance corpus uses py-aep commit
 `e12a451c35bacd3f34a080090265f9370e66162b` (MIT).
 
 Set `EFFECTCRAFT_AEP_PYTHON` to the Python interpreter that has py-aep installed.
-Without it, a macOS app uses the venv it may ship as `Contents/Resources/aep-python`
-(see `packaging/macos/aep-preview-app.sh`), then `python3`.
+Without it, an app uses the venv it may ship next to its exporter, `aep-python`
+(macOS: `Contents/Resources/aep-python`, see `packaging/macos/aep-preview-app.sh`;
+Windows: `aep-python\Scripts\python.exe` beside `effectcraft.exe`, see
+`packaging/windows/aep-preview.ps1`), then `python3` (Windows: `python`, since
+`python3` there is only a Microsoft Store alias).
 Set `EFFECTCRAFT_AEP_FONT_ROOT` when fonts shared by multiple projects live
 outside an AEP's own folder; the exporter searches that directory for exact
 PostScript-name and version matches. The standalone converter accepts the same
 directory through `--font-search-root`.
 The pinned dependency is in `requirements.txt` for a separate import-time venv.
 Automatic discovery is limited to `Contents/Resources/aep_ir_export.py` inside
-a macOS `.app` bundle. Development checkouts and other platforms must set
-`EFFECTCRAFT_AEP_EXPORTER` explicitly. Parent folders are never searched.
+a macOS `.app` bundle and to `aep_ir_export.py` beside the Windows executable
+(the app's own folder, which Windows already trusts for its DLLs). Development
+checkouts and other platforms must set `EFFECTCRAFT_AEP_EXPORTER` explicitly.
+Parent folders are never searched.
+
+On Windows, `packaging\windows\aep-preview.ps1` builds this checkout and installs
+it as "EffectCraft AEP" (default `%LOCALAPPDATA%\Programs\EffectCraft AEP`, with a
+Start menu shortcut and its own settings), with the exporter and a py-aep venv
+beside the executables; it needs Python 3.11 or newer and git once.
 Conversion JSON is read through a bounded pipe (512 MiB maximum), without a
 shared temporary file. The exporter is also usable directly:
 
