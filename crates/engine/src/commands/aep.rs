@@ -32,6 +32,10 @@ fn import_document(s: &mut Session, path: &str, bytes: &[u8], dir: &str, allow_l
     }
     if !imported.losses.is_empty() {
         s.toast(format!("Imported {path} with {} fidelity gaps", imported.losses.len()));
+        log::warn!("AEP import {path}: {} fidelity gaps", imported.losses.len());
+        for loss in &imported.losses {
+            log::warn!("  {loss}");
+        }
     }
     Ok(json!({
         "comps": imported.comps.iter().map(|id| id.0).collect::<Vec<_>>(),
@@ -49,6 +53,12 @@ fn import_ir(s: &mut Session, p: &Value) -> Result<Value> {
     let dir =
         str_p(p, "sourceDir").map(str::to_string).or_else(|| std::path::Path::new(&path).parent().map(|p| p.to_string_lossy().to_string())).unwrap_or_default();
     import_document(s, &path, &bytes, &dir, b_p(p, "allowLosses").unwrap_or(false))
+}
+
+/// An `.aep` opened or imported from the app (Open, drops, Finder): read in the background and
+/// imported even with fidelity gaps, which the toast counts and the log lists.
+pub(crate) fn import_picked(s: &mut Session, path: &str) -> Result<Value> {
+    import_aep(s, &json!({"path": path, "wait": false, "allowLosses": true}))
 }
 
 fn import_aep(s: &mut Session, p: &Value) -> Result<Value> {

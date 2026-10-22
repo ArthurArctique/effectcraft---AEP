@@ -469,9 +469,11 @@ fn run_actions(app: &mut EffectcraftApp, ctx: &egui::Context, actions: Vec<(&str
             Err(e) => app.ui.status = e,
             // Asking to save the open project first: Home stays until it is answered.
             Ok(r) if r.get("dialog").is_some() => {}
-            // Leave Home unless only the list changed or a file dialog was cancelled.
-            Ok(_) => {
-                let cancelled = matches!(id, "file.open" | "file.import") && (app.session.path.clone(), app.session.revision) == before;
+            // Leave Home unless only the list changed or a file dialog was cancelled (an .aep
+            // started reading in the background: a job, nothing changed yet).
+            Ok(r) => {
+                let cancelled =
+                    matches!(id, "file.open" | "file.import") && r.get("job").is_none() && (app.session.path.clone(), app.session.revision) == before;
                 if id != "file.clearRecent" && !cancelled {
                     app.ui.start_screen = false;
                 }
@@ -483,6 +485,27 @@ fn run_actions(app: &mut EffectcraftApp, ctx: &egui::Context, actions: Vec<(&str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn open_project_from_a_non_blocking_dialog_leaves_home() {
+        let mut app = EffectcraftApp::new(effectcraft_engine::Session::default());
+        app.ui.start_screen = true;
+        let answer = std::sync::Arc::new(std::sync::Mutex::new(None::<&str>));
+        let picked = answer.clone();
+        app.hooks.file_dialog_async = Some(Box::new(move |_, done| done(picked.lock().unwrap().take().map(|p| vec![p.to_string()]).unwrap_or_default())));
+        let ctx = egui::Context::default();
+        // Cancelled: Home stays.
+        run_actions(&mut app, &ctx, vec![("file.open", json!({}))]);
+        app.run_dialog_answers();
+        assert!(app.ui.start_screen);
+        // An After Effects project starts reading in the background: Home leaves at once.
+        *answer.lock().unwrap() = Some("/nowhere/Project.aep");
+        run_actions(&mut app, &ctx, vec![("file.open", json!({}))]);
+        assert!(app.ui.start_screen, "Home waits for the dialog");
+        app.run_dialog_answers();
+        assert!(!app.ui.start_screen);
+        assert!(app.session.jobs().iter().any(|j| j.kind == "importAep"));
+    }
 
     #[test]
     fn recent_list_comes_from_settings() {

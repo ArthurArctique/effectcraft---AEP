@@ -1437,8 +1437,14 @@ fn picked_value(key: &str, paths: Vec<String>) -> Option<Value> {
 /// command with the picked path (nothing when it was cancelled).
 pub(crate) fn dialog_answered(app: &mut EffectcraftApp, answer: crate::DialogAnswer) {
     let Some(v) = picked_value(answer.key, answer.paths) else { return };
-    if let Err(e) = run_with_picked(app, &answer.command, answer.key, &answer.params, v) {
-        app.ui.status = e;
+    match run_with_picked(app, &answer.command, answer.key, &answer.params, v) {
+        Err(e) => app.ui.status = e,
+        // Home's Open Project… / Import Footage… leave Home once the file is picked, as they do
+        // with a blocking dialog (`home::run_actions`); an .aep then reads in the background.
+        Ok(r) if r.get("dialog").is_none() && matches!(answer.command.as_str(), "file.open" | "file.import" | "file.importAep" | "file.importProject") => {
+            app.ui.start_screen = false;
+        }
+        Ok(_) => {}
     }
 }
 
@@ -1449,6 +1455,12 @@ fn run_with_picked(app: &mut EffectcraftApp, id: &str, key: &str, params: &Value
     // Picked files import in the background, with the Importing card showing progress (#270).
     if matches!(id, "file.import" | "file.importMultiple") {
         p.insert("background".into(), Value::Bool(true));
+    }
+    // A picked .aep reads in the background and opens even with fidelity gaps: a toast counts
+    // them and the log lists them, instead of a status-bar error that leaves nothing imported.
+    if id == "file.importAep" {
+        p.insert("wait".into(), Value::Bool(false));
+        p.insert("allowLosses".into(), Value::Bool(true));
     }
     // Photoshop files ask how to import them first; numbered stills whether to import them as an
     // image sequence.

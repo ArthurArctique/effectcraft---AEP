@@ -39,6 +39,11 @@ fn demo(s: &mut Session, _: &Value) -> Result<Value> {
 
 pub(crate) fn open(s: &mut Session, p: &Value) -> Result<Value> {
     let path = str_p(p, "path").ok_or_else(|| bad("file.open", "missing `path`"))?;
+    // An After Effects project opens as a new project holding its import, as After Effects opens it.
+    if path.to_ascii_lowercase().ends_with(".aep") {
+        new_project(s, &Value::Null)?;
+        return super::aep::import_picked(s, path);
+    }
     let bytes = s.services.read_file(path).map_err(|e| EngineError::Other(format!("cannot read {path}: {e}")))?;
     let text = String::from_utf8(bytes).map_err(|_| EngineError::Other("not a text project file".into()))?;
     // XML copies (File ▸ Save a Copy As XML…) open like the JSON project.
