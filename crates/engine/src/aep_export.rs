@@ -18,17 +18,20 @@ fn bundled_exporter(exe: &Path) -> Option<PathBuf> {
     Some(contents.join("Resources/aep_ir_export.py"))
 }
 
+/// The import-time venv (Python with py-aep) an app bundle may carry next to its exporter.
+fn bundled_python(exporter: &Path) -> PathBuf {
+    exporter.with_file_name("aep-python").join("bin/python3")
+}
+
 pub(super) fn convert(path: &str, progress: &AepProgress) -> io::Result<Vec<u8>> {
+    let bundled = if cfg!(target_os = "macos") { std::env::current_exe().ok().and_then(|exe| bundled_exporter(&exe)) } else { None };
     let script = std::env::var_os("EFFECTCRAFT_AEP_EXPORTER")
         .map(PathBuf::from)
-        .or_else(|| {
-            if !cfg!(target_os = "macos") {
-                return None;
-            }
-            bundled_exporter(&std::env::current_exe().ok()?).filter(|p| p.is_file())
-        })
+        .or_else(|| bundled.clone().filter(|p| p.is_file()))
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "AEP exporter script missing; set EFFECTCRAFT_AEP_EXPORTER"))?;
-    let python = std::env::var_os("EFFECTCRAFT_AEP_PYTHON").unwrap_or_else(|| "python3".into());
+    let python = std::env::var_os("EFFECTCRAFT_AEP_PYTHON")
+        .or_else(|| bundled.map(|exporter| bundled_python(&exporter)).filter(|p| p.is_file()).map(PathBuf::into_os_string))
+        .unwrap_or_else(|| "python3".into());
     let mut command = Command::new(python);
     command.arg(script).arg(path).arg("--stdout").arg("--progress").env("PYTHONIOENCODING", "utf-8");
     capture(&mut command, 512 * 1024 * 1024, progress)
@@ -122,6 +125,10 @@ mod tests {
         assert_eq!(
             bundled_exporter(Path::new("/Applications/EffectCraft.app/Contents/MacOS/effectcraft")),
             Some(PathBuf::from("/Applications/EffectCraft.app/Contents/Resources/aep_ir_export.py"))
+        );
+        assert_eq!(
+            bundled_python(Path::new("/Applications/EffectCraft.app/Contents/Resources/aep_ir_export.py")),
+            PathBuf::from("/Applications/EffectCraft.app/Contents/Resources/aep-python/bin/python3")
         );
         for exe in [
             "/Downloads/bin/effectcraft",

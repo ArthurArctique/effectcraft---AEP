@@ -8,6 +8,8 @@ converting; the SceneYard acceptance corpus uses py-aep commit
 `e12a451c35bacd3f34a080090265f9370e66162b` (MIT).
 
 Set `EFFECTCRAFT_AEP_PYTHON` to the Python interpreter that has py-aep installed.
+Without it, a macOS app uses the venv it may ship as `Contents/Resources/aep-python`
+(see `packaging/macos/aep-preview-app.sh`), then `python3`.
 Set `EFFECTCRAFT_AEP_FONT_ROOT` when fonts shared by multiple projects live
 outside an AEP's own folder; the exporter searches that directory for exact
 PostScript-name and version matches. The standalone converter accepts the same
