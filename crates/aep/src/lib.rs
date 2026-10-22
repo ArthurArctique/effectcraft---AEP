@@ -426,7 +426,11 @@ fn import_doc(next: &mut Project, bytes: &[u8], source_dir: &str, resolve_media:
                 let solid = string(item, &["asset_type"]) == Some("solid");
                 let source = string(item, &["file", "path", "file_path", "source_path"]).unwrap_or("");
                 let windows_absolute = source.as_bytes().get(1) == Some(&b':');
-                let candidate = if Path::new(source).is_absolute() || windows_absolute || source_dir.is_empty() {
+                // No file at all (an After Effects placeholder): an offline item with no path, as
+                // File ▸ Import ▸ Placeholder makes. The project's folder is not its file.
+                let candidate = if source.is_empty() {
+                    String::new()
+                } else if Path::new(source).is_absolute() || windows_absolute || source_dir.is_empty() {
                     source.to_owned()
                 } else {
                     format!("{source_dir}/{source}")
@@ -435,7 +439,8 @@ fn import_doc(next: &mut Project, bytes: &[u8], source_dir: &str, resolve_media:
                     .filter(|p| Path::new(p).is_file())
                     .map(str::to_owned)
                     .or_else(|| if source.is_empty() || solid { None } else { resolve_media(&candidate) });
-                if resolved.is_none() && !solid {
+                // Missing media lists what can be relinked by path; a placeholder has none.
+                if resolved.is_none() && !solid && !source.is_empty() {
                     result.missing_media.push(source.to_owned());
                 }
                 if solid {
@@ -2941,6 +2946,30 @@ mod tests {
         let result = import_ir(&mut project, ir.to_string().as_bytes(), "", &mut |_| None).unwrap();
         let layer = &project.comp(result.primary_comp.unwrap()).unwrap().layers[0];
         assert!(matches!(layer.track_matte, Some(TrackMatte { kind: MatteKind::AlphaInverted, .. })));
+    }
+
+    #[test]
+    fn placeholder_is_offline_without_a_path() {
+        // Seen in a project saved on Windows: AE's placeholder item has no file and is missing.
+        let ir = serde_json::json!({"schema_version":1,"items":[
+            {"id":92,"kind":"footage","name":"Kar 2M.aep","file":null,"footage_missing":true,
+             "width":1920,"height":1080,"duration":0.68,"frame_rate":30.0,"has_video":true,
+             "asset_type":"placeholder","source_type":"PlaceholderSource"}
+        ]});
+        let mut project = Project::default();
+        let result = import_ir(&mut project, ir.to_string().as_bytes(), "/projects/kar", &mut |_| None).unwrap();
+        assert!(result.missing_media.is_empty(), "{:?}", result.missing_media);
+        let footage = project
+            .items
+            .values()
+            .find_map(|item| match &item.kind {
+                ItemKind::Footage(f) => Some(f),
+                _ => None,
+            })
+            .unwrap();
+        assert!(footage.missing);
+        // Not the project's folder, which the footage check would find and mark present.
+        assert_eq!(footage.path, "");
     }
 
     #[test]
