@@ -27,7 +27,8 @@ fn import_document(s: &mut Session, path: &str, bytes: &[u8], dir: &str, allow_l
         state.project_selection = result.comps.clone();
         Ok(result)
     })?;
-    if let Some(comp) = imported.primary_comp.or_else(|| imported.comps.first().copied()) {
+    // The primary comp opens last: it is the active one.
+    for comp in imported.open_comps.iter().copied().chain(imported.primary_comp.or_else(|| imported.comps.first().copied())) {
         s.open_comp(comp);
     }
     if !imported.losses.is_empty() {

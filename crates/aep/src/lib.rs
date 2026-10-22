@@ -42,6 +42,9 @@ pub enum AepError {
 #[derive(Debug, Default)]
 pub struct ImportResult {
     pub primary_comp: Option<ItemId>,
+    /// The comps to open as tabs (After Effects' open viewers, its selected comp, a top-level
+    /// "main"), `primary_comp` among them.
+    pub open_comps: Vec<ItemId>,
     pub comps: Vec<ItemId>,
     pub items: Vec<ItemId>,
     /// AE project item id → EffectCraft id. Never keyed by display name.
@@ -731,14 +734,26 @@ fn import_doc(next: &mut Project, bytes: &[u8], source_dir: &str, resolve_media:
     let referenced: std::collections::BTreeSet<ItemId> =
         next.comps().flat_map(|(_, c)| c.layers.iter().filter_map(|l| if let LayerSource::Comp { item } = &l.source { Some(*item) } else { None })).collect();
     let roots: Vec<ItemId> = result.comps.iter().copied().filter(|id| !referenced.contains(id)).collect();
-    result.primary_comp = roots
-        .iter()
-        .copied()
-        .find(|id| next.item(*id).is_some_and(|i| preferred_comp_name(&i.name)))
-        .or_else(|| roots.first().copied())
-        .or_else(|| result.comps.first().copied());
-    if roots.len() > 1 && !roots.iter().any(|id| next.item(*id).is_some_and(|i| preferred_comp_name(&i.name))) {
+    // What After Effects showed on save comes first: the comp in the active viewer (else another
+    // open viewer's), then the comp selected in the Project panel, then a top-level "main".
+    let ae_project = doc.fields.get("project");
+    let comp_of = |ae: Option<i64>| ae.and_then(|ae| result.item_ids.get(&ae).copied()).filter(|id| result.comps.contains(id));
+    let viewers: Vec<(ItemId, bool)> = ae_project
+        .and_then(|p| p.get("open_viewers"))
+        .and_then(Json::as_array)
+        .map(|v| v.iter().filter_map(|v| Some((comp_of(integer(v, &["item_id"]))?, boolean(v, &["active"]).unwrap_or(false)))).collect())
+        .unwrap_or_default();
+    let selected = comp_of(ae_project.and_then(|p| integer(p, &["active_item_id"])));
+    let named = roots.iter().copied().find(|id| next.item(*id).is_some_and(|i| preferred_comp_name(&i.name)));
+    let shown = viewers.iter().find(|v| v.1).or(viewers.first()).map(|v| v.0);
+    result.primary_comp = shown.or(selected).or(named).or_else(|| roots.first().copied()).or_else(|| result.comps.first().copied());
+    if roots.len() > 1 && shown.is_none() && selected.is_none() && named.is_none() {
         result.warnings.push(format!("{} top-level compositions; selected first as primary", roots.len()));
+    }
+    for id in named.into_iter().chain(selected).chain(viewers.iter().map(|v| v.0)).chain(result.primary_comp) {
+        if !result.open_comps.contains(&id) {
+            result.open_comps.push(id);
+        }
     }
     next.fix_next_id();
     Ok(result)
@@ -2161,6 +2176,28 @@ mod tests {
             });
             assert!(a.zip(b).is_some_and(|(a, b)| (a - b).abs() < 1e-6), "time {comp_time}: {a:?} vs {b:?}");
         }
+    }
+
+    #[test]
+    fn the_comp_after_effects_showed_opens_first() {
+        let comp =
+            |id: i64, name: &str| serde_json::json!({"id":id,"kind":"comp","name":name,"width":100,"height":100,"duration":5,"frame_rate":30,"layers":[]});
+        let ir = |project: Json| {
+            let ir = serde_json::json!({"schema_version":1,"project":project,
+                "items":[comp(1, "main Comp. liée 01"), comp(2, "Scene"), comp(3, "Selected"), {"id":4,"kind":"folder","name":"F"}]});
+            let mut project = Project::default();
+            import_ir(&mut project, ir.to_string().as_bytes(), "", &mut |_| None).unwrap()
+        };
+        // The active viewer's comp wins over the selected item and the "main" name; all three open.
+        let r = ir(serde_json::json!({"active_item_id":3,"open_viewers":[{"item_id":4,"active":false},{"item_id":2,"active":true}]}));
+        assert_eq!(r.primary_comp, Some(r.item_ids[&2]));
+        assert_eq!(r.open_comps, [1, 3, 2].map(|id| r.item_ids[&id]));
+        // Without a viewer, the comp selected in the Project panel.
+        let r = ir(serde_json::json!({"active_item_id":3,"open_viewers":[]}));
+        assert_eq!(r.primary_comp, Some(r.item_ids[&3]));
+        // A selected folder or nothing recorded: a top-level "main", as before.
+        let r = ir(serde_json::json!({"active_item_id":4}));
+        assert_eq!((r.primary_comp, r.open_comps.clone()), (Some(r.item_ids[&1]), vec![r.item_ids[&1]]));
     }
 
     #[test]

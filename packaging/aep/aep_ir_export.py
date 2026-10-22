@@ -791,13 +791,23 @@ class Exporter:
             items.append(self.item(item))
             if items[-1]["kind"] == "comp":
                 tick("Converting")
+        # What After Effects showed on save: the items open in a viewer (one of them the active
+        # viewer) and the item selected in the Project panel; the importer opens those comps.
+        viewers = []
+        for item in project:
+            viewer = getattr(item, "_viewer", None)
+            if viewer is not None:
+                viewers.append({"item_id": item.id, "active": bool(self.read(viewer, "active", f"item {item.id}/viewer", False))})
+        active_item = self.read(project, "active_item", "project")
         with source.open("rb") as handle:
             digest = hashlib.file_digest(handle, "sha256").hexdigest()
         return {"schema_version": SCHEMA_VERSION,
                 "source": {"path": str(source), "sha256": digest},
                 "project": {"name": source.stem,
                             "bits_per_channel": self.value(self.read(project, "bits_per_channel", "project"), "project"),
-                            "expression_engine": self.read(project, "expression_engine", "project")},
+                            "expression_engine": self.read(project, "expression_engine", "project"),
+                            "active_item_id": getattr(active_item, "id", None),
+                            "open_viewers": viewers},
                 "items": items, "losses": self.losses, "media_issues": self.media_issues,
                 "counts": {"items": len(items), "comps": sum(i["kind"] == "comp" for i in items),
                            "layers": sum(len(i.get("layers", [])) for i in items),
