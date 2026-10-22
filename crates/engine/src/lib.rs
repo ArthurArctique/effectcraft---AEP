@@ -94,13 +94,17 @@ pub enum EngineError {
 
 pub type Result<T> = std::result::Result<T, EngineError>;
 
+/// Progress of an After Effects project conversion: `(done, total, message)`, `false` to stop it.
+pub type AepProgress<'a> = dyn Fn(u64, u64, &str) -> bool + Sync + 'a;
+
 /// Host services (file access) injected by the frontend.
 pub trait Services: Send + Sync {
     fn read_file(&self, path: &str) -> std::io::Result<Vec<u8>>;
     fn write_file(&self, path: &str, data: &[u8]) -> std::io::Result<()>;
-    /// Convert an After Effects project to the versioned AEP import document.
+    /// Convert an After Effects project to the versioned AEP import document, reporting
+    /// `progress(done, total, message)`; it returns `false` to stop the conversion.
     /// Browser hosts and hosts without the optional importer can return Unsupported.
-    fn export_aep_ir(&self, _path: &str) -> std::io::Result<Vec<u8>> {
+    fn export_aep_ir(&self, _path: &str, _progress: &AepProgress) -> std::io::Result<Vec<u8>> {
         Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "AEP importer is not configured on this host"))
     }
     /// Whether a file exists (the background footage check after open).
@@ -151,8 +155,8 @@ impl Services for FsServices {
         config::atomic_write(std::path::Path::new(path), data)
     }
     #[cfg(not(target_arch = "wasm32"))]
-    fn export_aep_ir(&self, path: &str) -> std::io::Result<Vec<u8>> {
-        aep_export::convert(path)
+    fn export_aep_ir(&self, path: &str, progress: &AepProgress) -> std::io::Result<Vec<u8>> {
+        aep_export::convert(path, progress)
     }
 }
 

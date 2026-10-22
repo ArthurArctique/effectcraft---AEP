@@ -5,10 +5,12 @@ Run with py-aep/.venv/bin/python aep_ir_export.py source.aep -o output.json
 
 import argparse
 import base64
+import gc
 import hashlib
 import json
 import re
 import math
+import os
 import struct
 import sys
 import unicodedata
@@ -63,7 +65,8 @@ POPUP_DEFAULTS = {"CC Page Turn-0008": 6}
 
 
 class Exporter:
-    def __init__(self, font_search_root=None):
+    def __init__(self, font_search_root=None, progress=None):
+        self.progress = progress or (lambda done, total, message: None)
         self.losses = []
         self.media_issues = []
         self.media_index = None
@@ -382,7 +385,7 @@ class Exporter:
         return value
 
     @staticmethod
-    def authored_effect_values(project):
+    def authored_effect_values(project, tick=None):
         """{(effect match name, parameter match name): {values set somewhere}}: where an
         untouched parameter can have picked up another instance's value. Keyframed values count:
         SceneYard Billiard Balls' untouched CC Sphere Rotation X/Z read as the keyframed ball's
@@ -407,6 +410,8 @@ class Exporter:
                         found.setdefault((effect_name, prop.match_name), set()).add(key)
 
         for comp in getattr(project, "compositions", []) or []:
+            if tick:
+                tick()
             for layer in getattr(comp, "layers", []) or []:
                 for effect in getattr(layer, "effects", None) or []:
                     try:
@@ -771,8 +776,21 @@ class Exporter:
         self.explicit_mattes = self.names_matte_layers(self.read(app, "version", "application"))
         project = app.project
         self.effect_definitions = getattr(project, "_effect_param_defs", None) or {}
-        self.authored_values = self.authored_effect_values(project)
-        items = [self.item(item) for item in project]
+        # Progress: reading each comp's layers, then converting each comp (the rest is quick).
+        comps = len(getattr(project, "compositions", []) or [])
+        done = 0
+
+        def tick(stage):
+            nonlocal done
+            done += 1
+            self.progress(done, 2 * comps, f"{stage} compositions ({(done - 1) % comps + 1}/{comps})")
+
+        self.authored_values = self.authored_effect_values(project, lambda: tick("Reading"))
+        items = []
+        for item in project:
+            items.append(self.item(item))
+            if items[-1]["kind"] == "comp":
+                tick("Converting")
         with source.open("rb") as handle:
             digest = hashlib.file_digest(handle, "sha256").hexdigest()
         return {"schema_version": SCHEMA_VERSION,
@@ -787,6 +805,10 @@ class Exporter:
 
 
 def main():
+    # py-aep builds millions of long-lived objects: the cyclic collector would rescan them over
+    # and over (half the run time on a 1,400-layer project) and freeing them at exit takes
+    # seconds, so neither happens; the process ends once its output is written.
+    gc.disable()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("source", type=Path)
     parser.add_argument("--font-search-root", type=Path,
@@ -794,8 +816,14 @@ def main():
     destination = parser.add_mutually_exclusive_group(required=True)
     destination.add_argument("-o", "--output", type=Path)
     destination.add_argument("--stdout", action="store_true")
+    parser.add_argument("--progress", action="store_true",
+                        help="Report progress on stderr as '@progress DONE TOTAL MESSAGE' lines")
     args = parser.parse_args()
-    data = Exporter(font_search_root=args.font_search_root).export(args.source)
+    progress = None
+    if args.progress:
+        def progress(done, total, message):
+            print(f"@progress {done} {total} {message}", file=sys.stderr, flush=True)
+    data = Exporter(font_search_root=args.font_search_root, progress=progress).export(args.source)
     encoded = windows_bytes_to_text(json.dumps(data, ensure_ascii=False, separators=(",", ":")))
     if args.stdout:
         sys.stdout.write(encoded + "\n")
@@ -803,6 +831,9 @@ def main():
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(encoded)
         print(json.dumps({"output": str(args.output), **data["counts"]}))
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(0)
 
 
 if __name__ == "__main__":

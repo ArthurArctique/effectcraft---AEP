@@ -381,7 +381,8 @@ fn progress_bar(p: &egui::Painter, bar: Rect, frac: f32, t: &Tokens) {
 }
 
 /// The Importing card, bottom left over the panels while files import in the background (dropped
-/// or picked in the Import dialog): the file being read, how many are left, and Cancel (#270).
+/// or picked in the Import dialog, or an After Effects project being read): the file being read,
+/// how many are left, and Cancel (#270).
 /// Returns the height it takes, so toasts sit above it.
 pub fn import_card(app: &mut EffectcraftApp, ui: &mut egui::Ui, full: Rect) -> f32 {
     if app.session.tasks.is_empty() {
@@ -390,7 +391,7 @@ pub fn import_card(app: &mut EffectcraftApp, ui: &mut egui::Ui, full: Rect) -> f
     let t = app.tokens;
     let w = 320.0_f32.min(full.width() - 32.0).max(120.0);
     let mut bottom = full.max.y - 16.0;
-    for j in app.session.jobs().into_iter().filter(|j| j.kind == "import" && j.running) {
+    for j in app.session.jobs().into_iter().filter(|j| matches!(j.kind.as_str(), "import" | "importAep") && j.running) {
         let r = Rect::from_min_max(pos2(full.min.x + 16.0, bottom - 56.0), pos2(full.min.x + 16.0 + w, bottom));
         let p = ui.painter();
         p.rect_filled(r, 6.0, t.panel_bg);

@@ -73,13 +73,19 @@ fn import_aep(s: &mut Session, p: &Value) -> Result<Value> {
     if b_p(p, "wait") == Some(false) {
         let services = s.services.clone();
         let name = std::path::Path::new(&path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| path.clone());
-        return s.spawn_task("importAep", format!("Importing {name}"), false, move |_ctl| {
-            let bytes = services.export_aep_ir(&path).map_err(|e| format!("cannot import {path}: {e}"))?;
+        return s.spawn_task("importAep", format!("Importing {name}"), false, move |ctl| {
+            ctl.message("Opening the After Effects project");
+            let progress = |done, total, message: &str| {
+                ctl.message(message);
+                ctl.progress(done, total)
+            };
+            let bytes = services.export_aep_ir(&path, &progress).map_err(|e| format!("cannot import {path}: {e}"))?;
+            ctl.message("Building the project");
             let apply: crate::jobs::Apply = Box::new(move |s: &mut Session| import_document(s, &path, &bytes, &dir, allow_losses));
             Ok(apply)
         });
     }
-    let bytes = s.services.export_aep_ir(&path).map_err(|e| EngineError::Other(format!("cannot import {path}: {e}")))?;
+    let bytes = s.services.export_aep_ir(&path, &|_, _, _| true).map_err(|e| EngineError::Other(format!("cannot import {path}: {e}")))?;
     import_document(s, &path, &bytes, &dir, allow_losses)
 }
 
