@@ -22,7 +22,7 @@ use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex};
 
 use effectcraft_effects::Buf;
-use effectcraft_project::{ItemKind, Layer, LayerSource, Node, PropGroup};
+use effectcraft_project::{FootageKind, ItemKind, Layer, LayerSource, Node, PropGroup};
 
 use crate::eval::EvalCtx;
 
@@ -506,6 +506,13 @@ pub fn input_key(ctx: &EvalCtx, layer: &Layer, scale: f64, draft: bool, blur: bo
     Some(h.finish())
 }
 
+/// A still image footage item, and any proxy of it a still too: the same picture at every time.
+fn is_still(ctx: &EvalCtx, item: effectcraft_project::ItemId) -> bool {
+    ctx.project.item(item).is_some_and(|it| {
+        matches!(&it.kind, ItemKind::Footage(f) if f.kind == FootageKind::Still) && it.proxy.as_deref().is_none_or(|p| p.footage.kind == FootageKind::Still)
+    })
+}
+
 /// Does the layer run an effect that reads the layer at other times (Echo, Timewarp…)?
 fn reads_other_times(layer: &Layer) -> bool {
     layer.switches.effects
@@ -552,16 +559,20 @@ fn key_any(ctx: &EvalCtx, layer: &Layer, scale: f64, draft: bool, blur: bool, fo
             hash_debug(&mut h, s);
         }
         LayerSource::Text | LayerSource::Shape => {}
-        LayerSource::Footage { item } if footage => {
+        // A still is the same picture at every time: its layer is cached as a solid's is (Time
+        // effects' inputs key every footage frame, see `input_key`).
+        LayerSource::Footage { item } if footage || is_still(ctx, *item) => {
             let it = ctx.project.item(*item)?;
             let ItemKind::Footage(f) = &it.kind else { return None };
             hash_debug(&mut h, f);
             // A proxy (and its Use Proxy switch) changes the pixels.
             hash_debug(&mut h, &it.proxy);
             item.hash(&mut h);
-            ctx.source_time(layer).0.hash(&mut h);
-            // Frame blending mixes neighbouring source frames.
-            ctx.comp.enable_frame_blending.hash(&mut h);
+            if !is_still(ctx, *item) {
+                ctx.source_time(layer).0.hash(&mut h);
+                // Frame blending mixes neighbouring source frames.
+                ctx.comp.enable_frame_blending.hash(&mut h);
+            }
         }
         _ => return None,
     }
@@ -663,6 +674,13 @@ pub fn styles_key(ctx: &EvalCtx, layer: &Layer, content_key: u64) -> u64 {
 }
 
 /// A sub-key of `key` (styled layer passes, flattened buffer).
+/// A key salt for a rectangle (a layer's shown part, see `Renderer::shown_part`).
+pub fn rect_hash(r: [f64; 4]) -> u64 {
+    let mut h = KeyHasher(0x9e37_79b9_7f4a_7c15);
+    r.map(f64::to_bits).hash(&mut h);
+    h.finish()
+}
+
 pub fn derive(key: u64, i: u64) -> u64 {
     let mut h = KeyHasher(key);
     i.hash(&mut h);

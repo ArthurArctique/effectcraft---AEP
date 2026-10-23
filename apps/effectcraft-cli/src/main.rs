@@ -111,7 +111,7 @@ const USAGE: &str = "usage: effectcraft-cli <info|commands|exec|run|props|get|se
                                            --progress: progress lines on stderr when it is not a terminal
                                            (progress <frames done> <total> <seconds elapsed> <seconds left|->)
   render/render-frame --template T.ectemplate [--values V.json]   render one template instance
-  bench [--comp C] [--time S] [--scale K] [--n N] [--play N] [--gpu [--adv3d]]   per-layer/effect render timings;
+  bench [--comp C] [--time S] [--scale K] [--n N] [--play N] [--media-cache-mb MB] [--gpu [--adv3d]]   per-layer/effect render timings;
                                            --play N renders N consecutive frames with/without the layer cache;
                                            --gpu compares CPU and GPU ms/frame for every comp at Full and Half
   bench --ops [--small] [--layers N] [--comps N] [--footage N]
@@ -131,6 +131,7 @@ options: --project F.ecproj | --demo | --empty   --save | --save-as F   --bridge
 const VALUED: &[&str] = &[
     "--n",
     "--play",
+    "--media-cache-mb",
     "--layers",
     "--comps",
     "--footage",
@@ -861,6 +862,13 @@ fn bench_cmd(args: &Args) -> Result<(), Failure> {
         return bench_ops(args);
     }
     let mut s = effectcraft_host::session();
+    // The cache budgets the app would use on this machine (default Preferences ▸ Memory, then
+    // `--media-cache-mb` for the footage cache).
+    s.sys_memory = effectcraft_engine::sysinfo::memory();
+    s.apply_cache_budgets();
+    if let Some(mb) = args.num("--media-cache-mb")? {
+        s.footage.set_cache_budget((mb.max(64.0) as usize) << 20);
+    }
     match &args.project {
         Some(p) => s.execute("file.open", json!({"path": p})),
         None => s.execute("file.openDemoProject", json!({})),

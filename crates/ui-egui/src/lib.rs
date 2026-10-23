@@ -962,6 +962,7 @@ impl EffectcraftApp {
             nested_switches: self.session.prefs.general.switches_affect_nested_comps,
             draft_shadows: self.session.prefs.three_d.realtime_shadows,
             proxy: Default::default(),
+            whole_layers: false,
         }
     }
 

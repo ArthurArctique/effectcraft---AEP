@@ -325,6 +325,19 @@ pub fn resample(src: &Image, w: u32, h: u32) -> Image {
     out
 }
 
+/// The pixels `[x, x + rw) × [y, y + rh)` (`region`) of [`resample`]`(src, w, h)`, made alone: a
+/// layer's visible part without resampling the whole image.
+pub fn resample_region(src: &Image, w: u32, h: u32, region: [u32; 4]) -> Image {
+    let [x, y, rw, rh] = region;
+    let mut out = Image::new(rw, rh);
+    if src.is_empty() || w == 0 || h == 0 || rw == 0 || rh == 0 {
+        return out;
+    }
+    let m = Mat3::translate(vec2(-(x as f64), -(y as f64))) * Mat3::scale(vec2(w as f64 / src.width as f64, h as f64 / src.height as f64));
+    composite_warp(&mut out, src, &m, &WarpOpts::default());
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -357,6 +370,24 @@ mod tests {
             }
         }
         img
+    }
+
+    /// A region resampled alone equals that part of the whole image resampled, down and up.
+    #[test]
+    fn resample_region_equals_part_of_resample() {
+        let src = test_image(97, 61, 9);
+        for (w, h) in [(31, 20), (64, 41), (150, 95)] {
+            let full = resample(&src, w, h);
+            for region in [[0, 0, w, h], [5, 3, 11, 9], [w - 7, h - 4, 7, 4]] {
+                let part = resample_region(&src, w, h, region);
+                for y in 0..region[3] {
+                    for x in 0..region[2] {
+                        let (a, b) = (full.get((region[0] + x) as i64, (region[1] + y) as i64), part.get(x as i64, y as i64));
+                        assert!((0..4).all(|c| (a[c] - b[c]).abs() < 1e-5), "{w}x{h} {region:?} at ({x}, {y}): {a:?} vs {b:?}");
+                    }
+                }
+            }
+        }
     }
 
     /// The fast affine path equals the reference per-pixel path (modes, filters, transforms).

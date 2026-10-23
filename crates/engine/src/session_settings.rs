@@ -77,6 +77,7 @@ impl Session {
         let b = self.prefs.cache_budgets(self.sys_memory);
         self.layer_cache.set_budget(b.layer);
         self.footage.set_cache_budget(b.media);
+        self.footage.set_still_budget(b.stills);
     }
 
     /// Take the latest reading of the system's memory and start the next one in the background

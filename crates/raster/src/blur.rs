@@ -157,6 +157,12 @@ pub fn gaussian_blur(img: &Image, sigma_x: f64, sigma_y: f64, repeat: bool) -> I
     box_passes(img, &rx, &ry, repeat)
 }
 
+/// How far [`gaussian_blur`] reads along an axis blurred by `sigma`: a blurred pixel depends only
+/// on the input pixels within this many pixels of it (the sum of its box passes' radii).
+pub fn gaussian_reach(sigma: f64) -> usize {
+    if sigma > 0.05 { box_radii(sigma, 3).iter().sum() } else { 0 }
+}
+
 /// Motion blur along `angle_deg` (0 = vertical in AE's Directional Blur, measured clockwise from
 /// up) over `length` pixels.
 pub fn directional_blur(img: &Image, angle_deg: f64, length: f64) -> Image {
@@ -226,6 +232,40 @@ mod tests {
         let sum: f32 = b.data.iter().map(|p| p[3]).sum();
         assert!((sum - 1.0).abs() < 1e-3, "{sum}");
         assert!(b.get(32, 32)[3] < 0.05);
+    }
+
+    /// A crop grown by `gaussian_reach` on every side blurs to the same pixels inside it as the
+    /// whole image, with and without repeated edges.
+    #[test]
+    fn gaussian_reach_bounds_what_a_pixel_reads() {
+        let mut img = Image::new(200, 160);
+        for y in 0..160 {
+            for x in 0..200 {
+                let a = crate::hash_noise(x, y, 3);
+                img.set(x, y, [crate::hash_noise(x, y, 4) * a, crate::hash_noise(x, y, 5) * a, 0.2 * a, a]);
+            }
+        }
+        for (sx, sy) in [(0.5, 0.5), (2.0, 7.5), (6.0, 0.0), (11.3, 4.2)] {
+            for repeat in [false, true] {
+                let full = gaussian_blur(&img, sx, sy, repeat);
+                let (rx, ry) = (gaussian_reach(sx) as u32, gaussian_reach(sy) as u32);
+                // The region [80, 110) × [60, 80), its crop grown by the reach.
+                let (x0, y0) = (80 - rx, 60 - ry);
+                let mut crop = Image::new(30 + 2 * rx, 20 + 2 * ry);
+                for y in 0..crop.height {
+                    for x in 0..crop.width {
+                        crop.set(x, y, img.get((x0 + x) as i64, (y0 + y) as i64));
+                    }
+                }
+                let part = gaussian_blur(&crop, sx, sy, repeat);
+                for y in 60..80u32 {
+                    for x in 80..110u32 {
+                        let (a, b) = (full.get(x as i64, y as i64), part.get((x - x0) as i64, (y - y0) as i64));
+                        assert!((0..4).all(|c| (a[c] - b[c]).abs() < 1e-5), "σ ({sx}, {sy}) repeat {repeat} at ({x}, {y}): {a:?} vs {b:?}");
+                    }
+                }
+            }
+        }
     }
 
     #[test]

@@ -791,7 +791,9 @@ impl Prefs {
     /// and halved while the system is low on memory when **Reduce Cache Size When System Is Low
     /// on Memory** is on. `mem` = the system's memory (`None` = unknown: configured budgets).
     /// In the browser the layer and footage caches also stay within [`WEB_LAYER_CACHE`] and
-    /// [`WEB_MEDIA_CACHE`].
+    /// [`WEB_MEDIA_CACHE`]. Decoded stills may also use the RAM those leave below the reserve
+    /// (After Effects keeps footage in all the RAM it is allowed), never less than the footage
+    /// cache.
     pub fn cache_budgets(&self, mem: Option<crate::sysinfo::SysMemory>) -> CacheBudgets {
         self.cache_budgets_in(mem, cfg!(target_arch = "wasm32"))
     }
@@ -805,6 +807,7 @@ impl Prefs {
         let floor = 64u64 << 20;
         let mut capped = false;
         let mut reduced = false;
+        let mut stills = m;
         if let Some(mem) = mem.filter(|m| m.total > 0) {
             let reserved = (self.memory.ram_reserved_gb as u64) << 30;
             let cap = mem.total.saturating_sub(reserved).max(3 * floor);
@@ -814,12 +817,20 @@ impl Prefs {
                 (l, m, p) = ((l as f64 * k) as u64, (m as f64 * k) as u64, (p as f64 * k) as u64);
                 capped = true;
             }
+            stills = if web { m } else { cap.saturating_sub(l + m + p).max(m) };
             if self.memory.reduce_cache_when_low && mem.is_low() {
-                (l, m, p) = (l / 2, m / 2, p / 2);
+                (l, m, p, stills) = (l / 2, m / 2, p / 2, stills / 2);
                 reduced = true;
             }
         }
-        CacheBudgets { layer: l.max(floor) as usize, media: m.max(floor) as usize, preview: p.max(floor) as usize, capped, reduced }
+        CacheBudgets {
+            layer: l.max(floor) as usize,
+            media: m.max(floor) as usize,
+            preview: p.max(floor) as usize,
+            stills: stills.max(floor) as usize,
+            capped,
+            reduced,
+        }
     }
 
     /// Composition ▸ Motion Path: the layer-time span of a motion path to draw around `now`
@@ -981,6 +992,8 @@ pub struct CacheBudgets {
     pub layer: usize,
     pub media: usize,
     pub preview: usize,
+    /// Decoded still images (see [`Prefs::cache_budgets`]).
+    pub stills: usize,
     /// Scaled down to leave the reserved RAM free.
     pub capped: bool,
     /// Halved because the system is low on memory.

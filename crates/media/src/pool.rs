@@ -165,10 +165,20 @@ pub struct PoolStats {
 #[derive(Default)]
 struct CacheState {
     lru: Lru,
+    /// Decoded still images, under their own budget ([`MediaPool::set_still_budget`]): every
+    /// frame shows them again, so movie frames passing through `lru` must not evict them.
+    stills: Lru,
     /// Frames being decoded right now (requests for them wait instead of decoding again).
     inflight: HashSet<Key>,
     /// Last frame index requested per movie (sequential-playback detection).
     last: HashMap<Arc<str>, i64>,
+}
+
+impl CacheState {
+    /// The cache a frame lives in: the stills' or the other frames'.
+    fn frames(&mut self, still: bool) -> &mut Lru {
+        if still { &mut self.stills } else { &mut self.lru }
+    }
 }
 
 /// A movie/audio source by path and the turn its picture is shown with
@@ -194,6 +204,7 @@ struct Inner {
     cache: Mutex<CacheState>,
     done: Condvar,
     budget: AtomicU64,
+    still_budget: AtomicU64,
     read_ahead: AtomicBool,
     hits: AtomicU64,
     misses: AtomicU64,
@@ -261,7 +272,8 @@ impl MediaPool {
         Self::with_budget(DEFAULT_BUDGET)
     }
 
-    /// A pool whose frame cache holds at most `bytes` of decoded frames.
+    /// A pool whose frame cache holds at most `bytes` of decoded frames (and as much of decoded
+    /// stills until [`MediaPool::set_still_budget`]).
     pub fn with_budget(bytes: usize) -> Self {
         Self {
             inner: Arc::new(Inner {
@@ -272,6 +284,7 @@ impl MediaPool {
                 cache: Mutex::default(),
                 done: Condvar::new(),
                 budget: AtomicU64::new(bytes as u64),
+                still_budget: AtomicU64::new(bytes as u64),
                 read_ahead: AtomicBool::new(cfg!(not(target_arch = "wasm32"))),
                 hits: AtomicU64::new(0),
                 misses: AtomicU64::new(0),
@@ -295,6 +308,18 @@ impl MediaPool {
         lock(&self.inner.cache).lru.evict(bytes);
     }
 
+    /// The decoded-stills budget in bytes.
+    pub fn still_budget(&self) -> usize {
+        self.inner.still_budget.load(Ordering::Relaxed) as usize
+    }
+
+    /// Change the budget of decoded still images, kept apart from movie and sequence frames
+    /// (evicts immediately when shrinking).
+    pub fn set_still_budget(&self, bytes: usize) {
+        self.inner.still_budget.store(bytes as u64, Ordering::Relaxed);
+        lock(&self.inner.cache).stills.evict(bytes);
+    }
+
     /// Enable or disable reading one frame ahead during sequential playback (on by default on
     /// native builds; ignored on wasm32).
     pub fn set_read_ahead(&self, on: bool) {
@@ -308,8 +333,8 @@ impl MediaPool {
             hits: i.hits.load(Ordering::Relaxed),
             misses: i.misses.load(Ordering::Relaxed),
             prefetched: i.prefetched.load(Ordering::Relaxed),
-            frames: c.lru.map.len(),
-            bytes: c.lru.bytes,
+            frames: c.lru.map.len() + c.stills.map.len(),
+            bytes: c.lru.bytes + c.stills.bytes,
             opened: i.opened.load(Ordering::Relaxed),
         }
     }
@@ -318,6 +343,7 @@ impl MediaPool {
     pub fn clear_frames(&self) {
         let mut c = lock(&self.inner.cache);
         c.lru = Lru::default();
+        c.stills = Lru::default();
         c.last.clear();
         drop(c);
         // Decoded GIFs sit outside the frame budget; Purge frees them too.
@@ -338,9 +364,12 @@ impl MediaPool {
         lock(&self.inner.gifs).remove(path);
         lock(&self.inner.problems).remove(path);
         let mut c = lock(&self.inner.cache);
-        let keys: Vec<Key> = c.lru.map.keys().filter(|k| &*k.path == path).cloned().collect();
-        for k in keys {
-            c.lru.remove(&k);
+        let state = &mut *c;
+        for lru in [&mut state.lru, &mut state.stills] {
+            let keys: Vec<Key> = lru.map.keys().filter(|k| &*k.path == path).cloned().collect();
+            for k in keys {
+                lru.remove(&k);
+            }
         }
         c.last.remove(path);
         drop(c);
@@ -719,6 +748,7 @@ impl Inner {
         if movie && let Some(size) = size {
             loc.key.size = size;
         }
+        let still = !movie && footage.kind == FootageKind::Still;
         let mut c = lock(&self.cache);
         // sequential playback of a movie: read the next frame ahead
         if playback && movie {
@@ -733,7 +763,7 @@ impl Inner {
             }
         }
         loop {
-            if let Some(img) = c.lru.get(&loc.key) {
+            if let Some(img) = c.frames(still).get(&loc.key) {
                 self.hits.fetch_add(1, Ordering::Relaxed);
                 return Ok(img);
             }
@@ -756,7 +786,8 @@ impl Inner {
         drop(c);
         let _guard = Inflight { inner: self, key: loc.key.clone() };
         let img = Arc::new(self.decode(&loc, footage)?);
-        lock(&self.cache).lru.insert(loc.key, img.clone(), self.budget());
+        let budget = if still { self.still_budget.load(Ordering::Relaxed) as usize } else { self.budget() };
+        lock(&self.cache).frames(still).insert(loc.key, img.clone(), budget);
         Ok(img)
     }
 
@@ -843,6 +874,9 @@ impl FootageSource for MediaPool {
     }
     fn set_cache_budget(&self, bytes: usize) {
         self.set_budget(bytes);
+    }
+    fn set_still_budget(&self, bytes: usize) {
+        MediaPool::set_still_budget(self, bytes);
     }
     fn purge(&self) {
         self.clear_frames();
@@ -1039,6 +1073,29 @@ mod tests {
         assert_eq!(Inner::frame_index(r, r.tick_of(25), 10, 3), 5);
         assert_eq!(Inner::frame_index(r, r.tick_of(45), 10, 3), 9);
         assert_eq!(Inner::frame_count(r, Tick(2 * TICKS_PER_SECOND)), 60);
+    }
+
+    /// Decoded stills keep to their own budget: a still larger than the frame cache stays decoded
+    /// while another is read (each frame of a comp showing both reads both), where a shared budget
+    /// decoded them again on every read.
+    #[test]
+    fn stills_stay_decoded_apart_from_the_frame_budget() {
+        let still = |pool: &MediaPool, path: &str| {
+            let mut bytes = std::io::Cursor::new(Vec::new());
+            image::DynamicImage::new_rgb8(40, 30).write_to(&mut bytes, image::ImageFormat::Png).unwrap();
+            pool.add_bytes(path, bytes.into_inner().into());
+            Footage { path: path.into(), kind: FootageKind::Still, width: 40, height: 30, has_video: true, ..Default::default() }
+        };
+        // 40 × 30 pixels decode to about 19 KB: over a 1 KiB frame budget.
+        for (still_budget, misses) in [(64 << 20, 2), (1 << 10, 4)] {
+            let pool = MediaPool::with_budget(1 << 10);
+            pool.set_still_budget(still_budget);
+            let (a, b) = (still(&pool, "/a.png"), still(&pool, "/b.png"));
+            for f in [&a, &b, &a, &b] {
+                pool.frame_at(f, Tick::ZERO).unwrap();
+            }
+            assert_eq!(pool.stats().misses, misses, "still budget {still_budget}");
+        }
     }
 
     #[test]

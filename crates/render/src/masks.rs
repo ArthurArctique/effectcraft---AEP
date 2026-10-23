@@ -22,6 +22,29 @@ pub struct MaskBlur {
     pub samples: usize,
 }
 
+/// How far the layer's masks read around a pixel of its buffer at `scale` (buffer pixels `[x,
+/// y]`): a feather blurs its mask's coverage (see `coverage_at`); paths, expansion and mask
+/// motion blur are exact at every pixel.
+pub(crate) fn reach(ctx: &EvalCtx, layer: &Layer, scale: f64) -> [usize; 2] {
+    let Some(masks) = layer.masks() else { return [0, 0] };
+    let mut r = [0, 0];
+    for g in masks.groups().filter(|g| g.enabled && matches!(g.kind, GroupKind::Mask { mode, .. } if mode != MaskMode::None)) {
+        let feather = ctx.v2(layer, g, "feather", [0.0; 2]);
+        let linear = matches!(g.kind, GroupKind::Mask { feather_falloff: FeatherFalloff::Linear, .. });
+        let one = |f: f64| {
+            if f <= 0.0 {
+                0
+            } else if linear {
+                ((f * scale / 2.0).round() as usize).max(1)
+            } else {
+                effectcraft_raster::gaussian_reach(f * scale / 2.0)
+            }
+        };
+        r = [r[0].max(one(feather[0])), r[1].max(one(feather[1]))];
+    }
+    r
+}
+
 /// Coverage of one mask in buffer pixels (before mode/opacity/invert). With mask motion blur
 /// (Layer ▸ Mask ▸ Motion Blur: On, or Same As Layer with the layer's switch on) an animated
 /// path is averaged over the comp's shutter.

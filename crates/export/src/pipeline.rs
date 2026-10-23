@@ -179,6 +179,8 @@ impl<'a> Cx<'a> {
             nested_switches: self.job.nested_switches,
             draft_shadows: true,
             proxy: s.proxy_use,
+            // Layers processed only where they show give the same frame.
+            whole_layers: false,
         };
         let mut r = Renderer::new(&self.project, self.job.footage, opts);
         r.expr = self.job.expr;

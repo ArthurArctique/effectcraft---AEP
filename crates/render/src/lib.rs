@@ -92,6 +92,10 @@ pub trait FootageSource: Send + Sync {
     /// Set the decoded-frame cache budget in bytes (Settings ▸ Memory & CPU); sources without
     /// a cache ignore it.
     fn set_cache_budget(&self, _bytes: usize) {}
+    /// Set the budget in bytes for decoded still images, which every frame shows again: kept
+    /// apart from movie frames, as After Effects keeps them in RAM, so neither playback nor other
+    /// stills evict them while they fit. Sources without a cache ignore it.
+    fn set_still_budget(&self, _bytes: usize) {}
     /// Drop the decoded frames it keeps (Edit ▸ Purge ▸ All Memory / Image Cache Memory): the
     /// next reads decode again. Sources without a cache ignore it.
     fn purge(&self) {}
@@ -170,6 +174,9 @@ impl FootageSource for CancellableFootage<'_> {
     }
     fn set_cache_budget(&self, bytes: usize) {
         self.inner.set_cache_budget(bytes)
+    }
+    fn set_still_budget(&self, bytes: usize) {
+        self.inner.set_still_budget(bytes)
     }
     fn purge(&self) {
         self.inner.purge()
@@ -278,7 +285,7 @@ impl EffectHost for FxHost<'_, '_, '_> {
         }
         let sub = self.r.nested();
         // The cached layer buffer is shared; effects get their own copy.
-        let buf = if masks_and_effects { (*sub.content_buf(self.ctx, other)?).clone() } else { sub.source(self.ctx, other)? };
+        let buf = if masks_and_effects { (*sub.content_buf(self.ctx, other)?).clone() } else { sub.source(self.ctx, other, None)? };
         Some(self.pixels(other, buf, true))
     }
 
@@ -356,7 +363,7 @@ impl EffectHost for FxHost<'_, '_, '_> {
         Some(if masks_and_effects {
             self.pixels(other, (*sub.content_buf(&ctx, other)?).clone(), true)
         } else if other.id == self.layer.id {
-            self.pixels(other, sub.source(&ctx, other)?, true)
+            self.pixels(other, sub.source(&ctx, other, None)?, true)
         } else {
             // Preserve other-layer reads: time effects historically see source + masks.
             self.pixels(other, (*sub.layer_input(&ctx, other, 0)?).clone(), false)
@@ -512,9 +519,19 @@ struct CpuFx<'a> {
     accel: Option<&'a dyn Accelerator>,
     levels: Option<f32>,
     buf: Option<Buf>,
+    /// The buffer is the shown part of its layer ([`Renderer::shown_part`]): it stays that part.
+    part: bool,
 }
 
 impl FxTarget for CpuFx<'_> {
+    fn cover(&mut self, size: [f64; 2]) {
+        if !self.part {
+            self.cpu(&mut |mut buf| {
+                buf.cover(size);
+                buf
+            });
+        }
+    }
     fn gpu(&mut self, steps: &[FxStep]) -> bool {
         let (Some(a), Some(b)) = (self.accel, &self.buf) else { return false };
         match a.effects(steps, b, self.levels) {
@@ -559,6 +576,9 @@ pub struct RenderOpts {
     pub nested_switches: bool,
     /// Realtime Shadows in Draft (Settings ▸ 3D): draft renders (`draft`) still cast shadows.
     pub draft_shadows: bool,
+    /// Process every layer whole, never only the part that shows ([`Renderer::shown_part`]): the
+    /// same frame, slower (a reference to compare against).
+    pub whole_layers: bool,
 }
 
 impl RenderOpts {
@@ -581,6 +601,7 @@ impl Default for RenderOpts {
             nested_switches: true,
             draft_shadows: true,
             proxy: effectcraft_project::render_queue::ProxyUse::CurrentSettings,
+            whole_layers: false,
         }
     }
 }
@@ -637,6 +658,10 @@ struct Through<'a> {
 /// Collapsed precomps within collapsed precomps that motion blur follows (more than
 /// [`Renderer::collapsed`]'s nesting limit).
 const MAX_THROUGH: usize = 16;
+
+/// Buffer pixels a layer's shown part keeps around it for the placement's sampling filter
+/// (bicubic reads two pixels each side) and rounding ([`Renderer::part_pixels`]).
+const PART_PAD: f64 = 3.0;
 
 /// A motion-blur shutter: the comp's, or for a collapsed precomp's layers the outermost
 /// containing comp's (they are drawn into its frames).
@@ -1096,16 +1121,27 @@ impl<'a> Renderer<'a> {
     }
 
     fn apply_effects(&self, ctx: &EvalCtx, layer: &Layer, buf: Buf, adjustment: bool) -> Buf {
-        self.apply_effects_timed(ctx, layer, buf, adjustment, usize::MAX, None)
+        self.apply_effects_timed(ctx, layer, buf, adjustment, usize::MAX, None, false)
     }
 
     /// Run the first `limit` effects of the layer's stack (by position; disabled ones count) on
-    /// `buf` (layer space, or the comp below for an adjustment layer).
-    fn apply_effects_timed(&self, ctx: &EvalCtx, layer: &Layer, mut buf: Buf, adjustment: bool, limit: usize, timing: Option<&mut Vec<(String, f64)>>) -> Buf {
+    /// `buf` (layer space, or the comp below for an adjustment layer). `part`: `buf` is the shown
+    /// part of the layer ([`Renderer::shown_part`]), which the effects keep to.
+    #[allow(clippy::too_many_arguments)]
+    fn apply_effects_timed(
+        &self,
+        ctx: &EvalCtx,
+        layer: &Layer,
+        mut buf: Buf,
+        adjustment: bool,
+        limit: usize,
+        timing: Option<&mut Vec<(String, f64)>>,
+        part: bool,
+    ) -> Buf {
         // The comp below an adjustment layer is not in its layer space: it stays as it is.
         let origin = if adjustment { [0.0; 2] } else { ctx.effect_bounds(layer).1 };
         buf.rebase(origin);
-        let mut out = self.effect_space_stack(ctx, layer, buf, adjustment, limit, timing, origin);
+        let mut out = self.effect_space_stack(ctx, layer, buf, adjustment, limit, timing, origin, part);
         out.rebase([-origin[0], -origin[1]]);
         out
     }
@@ -1122,8 +1158,9 @@ impl<'a> Renderer<'a> {
         limit: usize,
         timing: Option<&mut Vec<(String, f64)>>,
         origin: [f64; 2],
+        part: bool,
     ) -> Buf {
-        let mut t = CpuFx { accel: self.active_accel(), levels: self.pipe.levels, buf: Some(buf) };
+        let mut t = CpuFx { accel: self.active_accel(), levels: self.pipe.levels, buf: Some(buf), part };
         self.run_effect_stack(ctx, layer, adjustment, limit, timing, origin, &mut t);
         t.buf.unwrap_or_else(|| Buf { img: Image::new(1, 1), offset: [0.0; 2], scale: self.opts.scale })
     }
@@ -1254,9 +1291,11 @@ impl<'a> Renderer<'a> {
         }
     }
 
-    /// Source pixels of a layer in layer space (before masks/effects).
-    fn source(&self, ctx: &EvalCtx, layer: &Layer) -> Option<Buf> {
+    /// Source pixels of a layer in layer space (before masks/effects). `shown`: only the part of a
+    /// Solid or Footage layer its drawing can show is needed ([`Renderer::shown_part`]).
+    fn source(&self, ctx: &EvalCtx, layer: &Layer, shown: Option<[f64; 4]>) -> Option<Buf> {
         let s = self.opts.scale;
+        let part = |scale: f64, size: (u32, u32)| shown.and_then(|r| self.part_pixels(ctx, layer, r, scale, size));
         match &layer.source {
             LayerSource::Solid { item } => {
                 let ItemKind::Solid(sol) = &self.project.item(*item)?.kind else { return None };
@@ -1270,7 +1309,10 @@ impl<'a> Renderer<'a> {
                     c = conv.apply(c);
                 }
                 let px = self.pipe.quantize_px([c[0], c[1], c[2], 1.0]);
-                Some(Buf { img: Image::filled(w, h, px), offset: [0.0; 2], scale: s })
+                Some(match part(s, (w, h)) {
+                    Some([x, y, pw, ph]) => Buf { img: Image::filled(pw, ph, px), offset: [-(x as f64), -(y as f64)], scale: s },
+                    None => Buf { img: Image::filled(w, h, px), offset: [0.0; 2], scale: s },
+                })
             }
             LayerSource::Comp { item } => {
                 if self.project.comp_contains(*item, ctx.comp_id) {
@@ -1286,7 +1328,7 @@ impl<'a> Renderer<'a> {
                     && let Some(nc) = self.project.comp(*item)
                 {
                     let img = self.footage.frame_with(*item, pf, lt, None, self.pipe.float_encoding())?;
-                    return Some(self.footage_buf(&img, pf, nc.width, nc.height));
+                    return Some(self.footage_buf(&img, pf, nc.width, nc.height, None));
                 }
                 // Essential Properties overrides render the nested comp with this instance's
                 // values.
@@ -1339,7 +1381,7 @@ impl<'a> Renderer<'a> {
                 let pf = proxy.unwrap_or(f);
                 let size = self.reduced_size(f.width, f.height).filter(|_| proxy.is_none());
                 let img = self.footage_frame(ctx, layer, *item, pf, lt, size)?;
-                Some(self.footage_buf(&img, pf, f.width, f.height))
+                Some(self.footage_buf(&img, pf, f.width, f.height, Some(&part)))
             }
             LayerSource::Text => Some(self.authored(text::render(ctx, layer, self.raster_scale(ctx, layer)))),
             LayerSource::Shape => layer.props.sub("contents").map(|c| self.authored(shapes::render(ctx, layer, c, self.raster_scale(ctx, layer)))),
@@ -1355,16 +1397,28 @@ impl<'a> Renderer<'a> {
     }
 
     /// A decoded frame of `f` as a layer buffer covering `w`×`h` layer pixels (the footage's
-    /// nominal size; proxies are scaled up to it), converted from its colour profile.
-    fn footage_buf(&self, img: &Image, f: &Footage, w: u32, h: u32) -> Buf {
+    /// nominal size; proxies are scaled up to it), converted from its colour profile. `part`: the
+    /// pixels `[x, y, w, h]` needed of a buffer at a scale and size (see [`Renderer::part_pixels`]),
+    /// `None` for all of it; only those are made.
+    fn footage_buf(&self, img: &Image, f: &Footage, w: u32, h: u32, part: Option<&dyn Fn(f64, (u32, u32)) -> Option<[u32; 4]>>) -> Buf {
         let s = self.opts.scale;
         let k = if img.width > 0 { w.max(1) as f64 / img.width as f64 } else { 1.0 };
+        let part = |scale: f64, size: (u32, u32)| part.and_then(|p| p(scale, size));
+        let at = |r: [u32; 4]| [-(r[0] as f64), -(r[1] as f64)];
+        // `img` itself at `scale`, or its part.
+        let native = |scale: f64| match part(scale, (img.width, img.height)) {
+            Some(r) => Buf { img: img.crop(r[0] as i64, r[1] as i64, r[2], r[3]), offset: at(r), scale },
+            None => Buf { img: img.clone(), offset: [0.0; 2], scale },
+        };
         // Keep native pixels when downsampling is small; resample otherwise.
         let mut buf = match self.reduced_size(w, h) {
             // The source resampled it already (`FootageSource::frame_at_size`).
-            Some(size) if (img.width, img.height) == size => Buf { img: img.clone(), offset: [0.0; 2], scale: s },
-            Some((rw, rh)) if k <= 1.0 + 1e-9 => Buf { img: effectcraft_raster::resample(img, rw, rh), offset: [0.0; 2], scale: s },
-            _ => Buf { img: img.clone(), offset: [0.0; 2], scale: 1.0 / k },
+            Some(size) if (img.width, img.height) == size => native(s),
+            Some((rw, rh)) if k <= 1.0 + 1e-9 => match part(s, (rw, rh)) {
+                Some(r) => Buf { img: effectcraft_raster::resample_region(img, rw, rh, r), offset: at(r), scale: s },
+                None => Buf { img: effectcraft_raster::resample(img, rw, rh), offset: [0.0; 2], scale: s },
+            },
+            _ => native(1.0 / k),
         };
         if let Some(c) = self.pipe.media_in(f) {
             color::convert(&mut buf.img, &c);
@@ -1440,11 +1494,11 @@ impl<'a> Renderer<'a> {
         self.footage.frame_with(item, f, t, size, float)
     }
 
-    /// Source → masks, clamped/quantised to the project depth.
-    fn masked_source(&self, ctx: &EvalCtx, layer: &Layer) -> Option<Buf> {
+    /// Source → masks, clamped/quantised to the project depth (`shown`: see [`Renderer::source`]).
+    fn masked_source(&self, ctx: &EvalCtx, layer: &Layer, shown: Option<[f64; 4]>) -> Option<Buf> {
         let mut buf = match self.content_times(ctx, layer) {
             Some(times) => self.blurred_source(ctx, layer, &times)?,
-            None => self.source(ctx, layer)?,
+            None => self.source(ctx, layer, shown)?,
         };
         // A solid is filled with a quantised colour: only masks can take it off the grid.
         let solid = matches!(layer.source, LayerSource::Solid { .. });
@@ -1485,7 +1539,7 @@ impl<'a> Renderer<'a> {
     }
 
     fn layer_buf_keyed(&self, ctx: &EvalCtx, layer: &Layer) -> Option<(Arc<Buf>, Option<u64>)> {
-        let st = self.styled(ctx, layer, None)?;
+        let st = self.styled(ctx, layer, None, false)?;
         if st.passes.is_empty() {
             return Some((st.body, st.key));
         }
@@ -1506,17 +1560,23 @@ impl<'a> Renderer<'a> {
     /// (what the motion tracker analyses, like After Effects' Layer panel). `None` for layers
     /// without pixels.
     pub fn layer_source(&self, ctx: &EvalCtx, layer: &Layer) -> Option<Buf> {
-        self.source(ctx, layer)
+        self.source(ctx, layer, None)
     }
 
     /// Layer pixels after source → masks → effects (no layer styles).
     pub fn content_buf(&self, ctx: &EvalCtx, layer: &Layer) -> Option<Arc<Buf>> {
-        self.content_buf_timed(ctx, layer, None).map(|(b, _)| b)
+        self.content_buf_timed(ctx, layer, None, false).map(|(b, _)| b)
     }
 
-    fn content_buf_timed(&self, ctx: &EvalCtx, layer: &Layer, mut timing: Option<&mut LayerTiming>) -> Option<(Arc<Buf>, Option<u64>)> {
+    /// `draw`: the pixels are for drawing the layer into this render's output, so only the part it
+    /// shows is needed ([`Renderer::shown_part`]).
+    fn content_buf_timed(&self, ctx: &EvalCtx, layer: &Layer, mut timing: Option<&mut LayerTiming>, draw: bool) -> Option<(Arc<Buf>, Option<u64>)> {
+        let shown = if draw { self.shown_part(ctx, layer) } else { None };
         let key = self.cache.and_then(|_| cache::layer_key(ctx, layer, self.raster_scale(ctx, layer), self.opts.draft, self.mb_on(ctx, layer)));
         let key = self.content_key(ctx, layer, key);
+        // A part is cached under the part's place too, and kept only while the layer holds still
+        // on the output (a moving layer's parts are never asked for again).
+        let key = key.map(|k| shown.map_or(k, |r| cache::derive(k, cache::rect_hash(r))));
         if let (Some(c), Some(k)) = (self.cache, key)
             && let Some(b) = c.get(k)
         {
@@ -1525,9 +1585,12 @@ impl<'a> Renderer<'a> {
             }
             return Some((b, key));
         }
-        let buf = self.masked_source(ctx, layer)?;
-        let buf = Arc::new(self.apply_effects_timed(ctx, layer, buf, false, usize::MAX, timing.map(|t| &mut t.effects)));
-        if let (Some(c), Some(k)) = (self.cache_to_keep(), key) {
+        let buf = self.masked_source(ctx, layer, shown)?;
+        let buf = Arc::new(self.apply_effects_timed(ctx, layer, buf, false, usize::MAX, timing.map(|t| &mut t.effects), shown.is_some()));
+        let keep = shown.is_none() || self.shown_part(&ctx.at(ctx.time - ctx.comp.frame_rate.frame_duration()), layer) == shown;
+        if let (Some(c), Some(k)) = (self.cache_to_keep(), key)
+            && keep
+        {
             c.insert(k, buf.clone());
         }
         Some((buf, key))
@@ -1545,11 +1608,11 @@ impl<'a> Renderer<'a> {
         {
             return Some(b);
         }
-        let mut buf = self.masked_source(ctx, layer)?;
+        let mut buf = self.masked_source(ctx, layer, None)?;
         let origin = ctx.effect_bounds(layer).1;
         buf.rebase(origin);
         if effects > 0 {
-            buf = self.effect_space_stack(ctx, layer, buf, false, effects, None, origin);
+            buf = self.effect_space_stack(ctx, layer, buf, false, effects, None, origin, false);
         }
         let buf = Arc::new(buf);
         if let (Some(c), Some(k)) = (self.cache_to_keep(), key) {
@@ -1558,9 +1621,10 @@ impl<'a> Renderer<'a> {
         Some(buf)
     }
 
-    /// The layer with its styles: exterior passes and body (cached per pass).
-    fn styled(&self, ctx: &EvalCtx, layer: &Layer, mut timing: Option<&mut LayerTiming>) -> Option<StyledLayer> {
-        let (content, ckey) = self.content_buf_timed(ctx, layer, timing.as_deref_mut())?;
+    /// The layer with its styles: exterior passes and body (cached per pass). `draw`: see
+    /// [`Renderer::content_buf_timed`].
+    fn styled(&self, ctx: &EvalCtx, layer: &Layer, mut timing: Option<&mut LayerTiming>, draw: bool) -> Option<StyledLayer> {
+        let (content, ckey) = self.content_buf_timed(ctx, layer, timing.as_deref_mut(), draw)?;
         if !styles::active(ctx, layer) {
             return Some(StyledLayer { passes: vec![], body: content.clone(), content, key: ckey, ckey, plain: true });
         }
@@ -1657,6 +1721,100 @@ impl<'a> Renderer<'a> {
             * Mat3::translate(vec2(-buf.offset[0], -buf.offset[1]))
     }
 
+    /// The part `[x0, y0, x1, y1]` (layer coordinates) of a 2D Solid or Footage layer that drawing
+    /// it into this render's output can show, when processing only that part is worth it: the
+    /// output mapped back through the layer's placement, as After Effects renders only a layer's
+    /// region of interest. Grown by what the sampling filter, masks and effects read
+    /// ([`Renderer::part_pixels`]), that part gives the same pixels as the whole layer. `None`:
+    /// the whole layer is processed (most of it shows, an effect may read anywhere, or the
+    /// placement is not a plain 2D one).
+    pub fn shown_part(&self, ctx: &EvalCtx, layer: &Layer) -> Option<[f64; 4]> {
+        if self.opts.whole_layers {
+            return None;
+        }
+        let (w, h) = match &layer.source {
+            LayerSource::Solid { item } => match &self.project.item(*item)?.kind {
+                ItemKind::Solid(s) => (s.width as f64, s.height as f64),
+                _ => return None,
+            },
+            LayerSource::Footage { item } => match &self.project.item(*item)?.kind {
+                ItemKind::Footage(f) if !(layer.switches.collapse && is_vector_footage(f)) => (f.width as f64, f.height as f64),
+                _ => return None,
+            },
+            _ => return None,
+        };
+        if layer.is_3d()
+            || layer.switches.adjustment
+            || self.outer.is_some()
+            || self.links().next().is_some()
+            || self.mb_on(ctx, layer)
+            || styles::active(ctx, layer)
+        {
+            return None;
+        }
+        let s = self.opts.scale;
+        let reach = self.part_reach(ctx, layer, s)?;
+        let (cw, ch) = match self.roi_offset() {
+            Some((_, _, rw, rh)) => (rw as f64, rh as f64),
+            None => ((ctx.comp.width as f64 * s).round().max(1.0), (ctx.comp.height as f64 * s).round().max(1.0)),
+        };
+        let m = self.out_matrix() * Mat3::scale(vec2(s, s)) * ctx.layer_to_comp(layer).0;
+        if !m.is_affine() {
+            return None;
+        }
+        let inv = m.inverse()?;
+        let c = [(0.0, 0.0), (cw, 0.0), (0.0, ch), (cw, ch)].map(|(x, y)| inv.apply(vec2(x, y)));
+        let r = [
+            c.iter().map(|p| p.x).fold(f64::INFINITY, f64::min),
+            c.iter().map(|p| p.y).fold(f64::INFINITY, f64::min),
+            c.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max),
+            c.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max),
+        ];
+        if !r.iter().all(|v| v.is_finite()) || s <= 0.0 {
+            return None;
+        }
+        // Worth it while well under the whole layer is needed (the whole is also cached as the
+        // layer moves; a part only while it holds still).
+        let grow = |px: usize| (px as f64 + PART_PAD) / s;
+        let need_w = ((r[2] + grow(reach[0])).min(w) - (r[0] - grow(reach[0])).max(0.0)).max(0.0);
+        let need_h = ((r[3] + grow(reach[1])).min(h) - (r[1] - grow(reach[1])).max(0.0)).max(0.0);
+        (need_w * need_h < 0.75 * w * h).then_some(r)
+    }
+
+    /// The pixels `[x, y, w, h]` of a `size` buffer at `scale` (buffer pixels per layer pixel,
+    /// from the layer's corner) that its shown part `r` needs: grown by the sampling filter and
+    /// what masks and effects read. A part that shows nothing is one pixel (off the output).
+    fn part_pixels(&self, ctx: &EvalCtx, layer: &Layer, r: [f64; 4], scale: f64, size: (u32, u32)) -> Option<[u32; 4]> {
+        let [rx, ry] = self.part_reach(ctx, layer, scale)?;
+        if size.0 == 0 || size.1 == 0 {
+            return None;
+        }
+        let (w, h) = (size.0 as f64, size.1 as f64);
+        let x0 = ((r[0] * scale).floor() - PART_PAD - rx as f64).clamp(0.0, w);
+        let y0 = ((r[1] * scale).floor() - PART_PAD - ry as f64).clamp(0.0, h);
+        let x1 = ((r[2] * scale).ceil() + PART_PAD + rx as f64).clamp(0.0, w);
+        let y1 = ((r[3] * scale).ceil() + PART_PAD + ry as f64).clamp(0.0, h);
+        if x1 - x0 < 1.0 || y1 - y0 < 1.0 {
+            return Some([0, 0, 1, 1]);
+        }
+        Some([x0 as u32, y0 as u32, (x1 - x0) as u32, (y1 - y0) as u32])
+    }
+
+    /// How far masks and effects read around a pixel of the layer's buffer at `scale` (buffer
+    /// pixels `[x, y]`); `None` when an effect may read anywhere ([`effectcraft_effects::reach`]).
+    fn part_reach(&self, ctx: &EvalCtx, layer: &Layer, scale: f64) -> Option<[usize; 2]> {
+        let mut r = masks::reach(ctx, layer, scale);
+        let Some(fx) = layer.effects().filter(|_| layer.switches.effects) else { return Some(r) };
+        // The video effects the stack runs (see `run_effect_stack`).
+        for g in fx.groups().filter(|g| g.enabled) {
+            let GroupKind::Effect { effect } = &g.kind else { continue };
+            let Some(spec) = effectcraft_effects::find(effect).filter(|s| !effectcraft_effects::audio_fx::is_audio_effect(s.id)) else { continue };
+            let [x, y] = effectcraft_effects::reach(spec.id, &self.effect_params(ctx, layer, g), scale)?;
+            r = [r[0] + x, r[1] + y];
+        }
+        Some(r)
+    }
+
     /// The collapsed precomp layers this comp is drawn through, outermost first.
     fn links(&self) -> impl Iterator<Item = &Through<'a>> {
         self.through.iter().map_while(Option::as_ref)
@@ -1736,7 +1894,7 @@ impl<'a> Renderer<'a> {
     /// their bounds. Content that also changes its raster scale within the shutter, or would need
     /// an outsized buffer, is drawn once.
     fn blurred_source(&self, ctx: &EvalCtx, layer: &Layer, times: &[Tick]) -> Option<Buf> {
-        let bufs: Vec<Buf> = times.iter().filter_map(|t| self.source(&ctx.at(*t), layer)).collect();
+        let bufs: Vec<Buf> = times.iter().filter_map(|t| self.source(&ctx.at(*t), layer, None)).collect();
         let scale = bufs.first()?.scale;
         // Pixel = layer point × scale + offset: with the largest offset every buffer lands at
         // x + (off - its offset) ≥ 0.
@@ -1744,7 +1902,7 @@ impl<'a> Renderer<'a> {
         let w = bufs.iter().map(|b| off[0] - b.offset[0] + b.img.width as f64).fold(0.0, f64::max).ceil();
         let h = bufs.iter().map(|b| off[1] - b.offset[1] + b.img.height as f64).fold(0.0, f64::max).ceil();
         if bufs.iter().any(|b| (b.scale - scale).abs() > 1e-9) || !(w * h).is_finite() || w * h > (1u64 << 26) as f64 {
-            return self.source(ctx, layer);
+            return self.source(ctx, layer, None);
         }
         let mut acc = Image::new(w as u32, h as u32);
         let k = 1.0 / bufs.len() as f32;
@@ -1905,7 +2063,7 @@ impl<'a> Renderer<'a> {
         }
         let mut timing = self.profile.map(|_| LayerTiming { depth: self.depth, layer: layer.name.clone(), ..Default::default() });
         let t0 = web_time::Instant::now();
-        let Some(st) = self.styled(ctx, layer, timing.as_mut()) else { return Region::Empty };
+        let Some(st) = self.styled(ctx, layer, timing.as_mut(), true) else { return Region::Empty };
         let st = self.styled_to_blend(st);
         let t1 = web_time::Instant::now();
         let changed = if st.plain {
@@ -2031,7 +2189,7 @@ impl<'a> Renderer<'a> {
     /// Adjustment layer: effects applied to the comp below, limited to the layer's footprint
     /// and its track matte.
     fn draw_adjustment(&self, ctx: &EvalCtx, layer: &Layer, canvas: &mut Image, opacity: f32) {
-        let Some(mut foot) = self.source(ctx, layer) else { return };
+        let Some(mut foot) = self.source(ctx, layer, None) else { return };
         let _ = masks::apply(ctx, layer, &mut foot, self.mask_blur(ctx, layer));
         let mut matte = Image::new(canvas.width, canvas.height);
         self.place(ctx, layer, &foot, &mut matte, BlendMode::Normal, 1.0);
@@ -2212,7 +2370,7 @@ impl<'a> Renderer<'a> {
         {
             return Some(b);
         }
-        let mut foot = self.source(ctx, layer)?;
+        let mut foot = self.source(ctx, layer, None)?;
         let _ = masks::apply(ctx, layer, &mut foot, self.mask_blur(ctx, layer));
         let foot = Arc::new(foot);
         if let (Some(c), Some(k)) = (self.cache_to_keep(), key) {
@@ -2231,11 +2389,12 @@ impl<'a> Renderer<'a> {
         self.draw_collapsed(ctx, layer, item, canvas, false);
     }
 
-    /// The layer's finished buffers (styles included) in the blending space.
+    /// The layer's finished buffers (styles included) in the blending space, for drawing it into
+    /// this render's output: possibly only the part of it that shows ([`Renderer::shown_part`]).
     pub fn styled_layer(&self, ctx: &EvalCtx, layer: &Layer) -> Option<StyledLayer> {
         let mut timing = self.profile.map(|_| LayerTiming { depth: self.depth, layer: layer.name.clone(), ..Default::default() });
         let t0 = web_time::Instant::now();
-        let st = self.styled(ctx, layer, timing.as_mut()).map(|st| self.styled_to_blend(st));
+        let st = self.styled(ctx, layer, timing.as_mut(), true).map(|st| self.styled_to_blend(st));
         if let (Some(prof), Some(mut timing)) = (self.profile, timing) {
             timing.process_ms = t0.elapsed().as_secs_f64() * 1e3;
             if let Ok(mut v) = prof.lock() {
@@ -2415,6 +2574,8 @@ mod tests_footage_size;
 mod tests_frame_blend;
 #[cfg(test)]
 mod tests_guides;
+#[cfg(test)]
+mod tests_layer_part;
 #[cfg(test)]
 mod tests_mask_blur;
 #[cfg(test)]

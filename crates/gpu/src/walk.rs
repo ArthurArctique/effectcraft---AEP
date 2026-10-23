@@ -265,6 +265,8 @@ fn draw_resident_fx(e: &mut Enc, r: &Renderer, ctx: &EvalCtx, layer: &Layer, can
         || r.track_matte(ctx, layer).is_some()
         // Unchanged since the last frame: the cached result uploads once (the usual path).
         || r.layer_is_static(ctx, layer)
+        // Only part of it shows: the usual path processes just that part.
+        || r.shown_part(ctx, layer).is_some()
     {
         return None;
     }

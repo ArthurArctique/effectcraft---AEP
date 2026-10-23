@@ -25,6 +25,36 @@ fn dims_xy(dim: u32) -> (f64, f64) {
     }
 }
 
+/// How far an effect reads around each output pixel, in buffer pixels `[x, y]` (at buffer scale
+/// `scale`), for effects whose output pixel depends only on the input pixels within that distance
+/// (on the CPU and the GPU alike: nothing positional, no layer size, other layers or other times).
+/// Run on part of a layer grown by it, such an effect gives the same pixels inside that part.
+/// `None` for every other effect: it may read anything, and needs the whole layer.
+pub fn reach(id: &str, params: &crate::Params, scale: f64) -> Option<[usize; 2]> {
+    match id {
+        "ec.blur.gaussian" => {
+            let s = blur_sigma(params.f("blurriness")) * scale;
+            if s <= 0.0 {
+                return Some([0, 0]);
+            }
+            let (kx, ky) = dims_xy(params.e("dimensions"));
+            Some([effectcraft_raster::gaussian_reach(s * kx), effectcraft_raster::gaussian_reach(s * ky)])
+        }
+        "ec.blur.fastbox" => {
+            let r = (params.f("radius") * scale).round().max(0.0) as usize;
+            let it = params.f("iterations").round().clamp(1.0, 50.0) as usize;
+            let (kx, ky) = dims_xy(params.e("dimensions"));
+            Some([r * kx as usize * it, r * ky as usize * it])
+        }
+        "ec.stylize.glow" => {
+            let s = (params.f("radius") * scale / 2.0).max(0.5);
+            let (kx, ky) = dims_xy(params.e("glowDimensions"));
+            Some([effectcraft_raster::gaussian_reach(s * kx), effectcraft_raster::gaussian_reach(s * ky)])
+        }
+        _ => None,
+    }
+}
+
 fn gaussian(ctx: &EffectCtx, mut b: Buf) -> Buf {
     let s = blur_sigma(ctx.params.f("blurriness")) * b.scale;
     if s <= 0.0 {
@@ -737,6 +767,54 @@ pub fn specs() -> Vec<EffectSpec> {
 mod tests {
     use super::*;
     use crate::{EffectEnv, run_fx};
+
+    /// Run on a crop grown by [`reach`], these effects give the same pixels inside it as on the
+    /// whole image: what lets the renderer process only the visible part of a layer.
+    #[test]
+    fn reach_bounds_what_an_effect_reads() {
+        let (w, h) = (220u32, 160u32);
+        let mut img = Image::new(w, h);
+        for y in 0..h {
+            for x in 0..w {
+                let a = hash_noise(x, y, 11);
+                img.set(x, y, [hash_noise(x, y, 12) * a, hash_noise(x, y, 13) * a, 0.9 * a, a]);
+            }
+        }
+        let cases: [(&str, Vec<(&str, Value)>); 6] = [
+            ("ec.blur.gaussian", vec![("blurriness", num(9.0))]),
+            ("ec.blur.gaussian", vec![("blurriness", num(13.0)), ("dimensions", Value::Enum(1)), ("repeatEdge", Value::Bool(true))]),
+            ("ec.blur.fastbox", vec![("radius", num(4.0)), ("iterations", num(3.0))]),
+            ("ec.stylize.glow", vec![("radius", num(14.0)), ("threshold", num(40.0))]),
+            ("ec.stylize.glow", vec![("radius", num(9.0)), ("operation", Value::Enum(1)), ("glowDimensions", Value::Enum(2))]),
+            ("ec.stylize.glow", vec![("radius", num(0.0))]),
+        ];
+        for (id, vals) in cases {
+            let spec = crate::find(id).unwrap();
+            let mut params = crate::Params { values: spec.params.iter().map(|p| (p.id.to_string(), crate::default_value(p, [w as f64, h as f64]))).collect() };
+            for (k, v) in &vals {
+                params.values.insert(k.to_string(), v.clone());
+            }
+            let [rx, ry] = reach(id, &params, 1.0).unwrap().map(|r| r as u32);
+            let full = run_fx(id, &vals, img.clone(), 0.0, EffectEnv::default());
+            // The region [90, 130) × [60, 90), and a crop of it grown by the reach.
+            let (x0, y0) = (90 - rx, 60 - ry);
+            let mut crop = Image::new(40 + 2 * rx, 30 + 2 * ry);
+            for y in 0..crop.height {
+                for x in 0..crop.width {
+                    crop.set(x, y, img.get((x0 + x) as i64, (y0 + y) as i64));
+                }
+            }
+            let part = run_fx(id, &vals, crop, 0.0, EffectEnv::default());
+            let at = |b: &Buf, x: u32, y: u32| b.img.get(x as i64 + b.offset[0] as i64, y as i64 + b.offset[1] as i64);
+            for y in 60..90u32 {
+                for x in 90..130u32 {
+                    let (a, b) = (at(&full, x, y), at(&part, x - x0, y - y0));
+                    assert!((0..4).all(|c| (a[c] - b[c]).abs() < 1e-5), "{id} {vals:?} at ({x}, {y}): {a:?} vs {b:?}");
+                }
+            }
+        }
+        assert_eq!(reach("ec.distort.twirl", &crate::Params::default(), 1.0), None);
+    }
 
     /// A bright square on mid grey.
     fn scene() -> effectcraft_raster::Image {

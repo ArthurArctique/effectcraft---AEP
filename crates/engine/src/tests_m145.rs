@@ -189,11 +189,19 @@ fn cache_budgets_leave_reserved_ram_and_shrink_when_low() {
     p.memory.ram_reserved_gb = 6;
     let b = p.cache_budgets(None);
     assert_eq!((b.layer >> 20, b.preview >> 20, b.capped), (4096, 8192, false));
+    // Memory unknown: decoded stills get the footage cache's budget.
+    assert_eq!(b.stills, b.media);
     // 16 GB machine, 6 GB reserved: 16 GB of caches scaled into 10 GB.
     let m = SysMemory { total: 16 << 30, available: 12 << 30 };
     let b = p.cache_budgets(Some(m));
     assert!(b.capped && !b.reduced);
     assert!(((b.layer + b.media + b.preview) as i64 - (10i64 << 30)).abs() < 4, "{b:?}");
+    // Nothing left over: stills keep to the footage cache's budget.
+    assert_eq!(b.stills, b.media);
+    // 64 GB machine with the default 1 + 1 + 3 GB caches: decoded stills may use the rest of the
+    // RAM below the reserve (After Effects keeps footage in all of it).
+    let big = crate::prefs::Prefs::default().cache_budgets(Some(SysMemory { total: 64 << 30, available: 50 << 30 }));
+    assert_eq!(big.stills, (58usize << 30) - big.layer - big.media - big.preview, "{big:?}");
     // Low on memory: halved; off: not.
     let low = SysMemory { total: 16 << 30, available: 512 << 20 };
     let r = p.cache_budgets(Some(low));
